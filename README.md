@@ -21,7 +21,8 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 - A confirmed clear-data flow and Room migration for the shopping list.
 - Three-screen first-run introduction with skip, explore, and add-first-item paths.
 - CameraX barcode scanning through bundled, on-device ML Kit; online Open Food Facts lookup can prefill product name, brand, and category. Barcode reading itself works offline, and the expiry date always requires user entry.
+- On-device receipt OCR through bundled ML Kit Latin text recognition. Product name, likely price, and simple leading quantity are suggestions only; the user edits/confirms each candidate and enters its expiration date before it is saved. OCR accuracy depends on receipt quality; the bundled recognizer targets Latin script.
 
 ## Still outstanding
 
-Bulgarian localization, recipe favorites and dietary filters, receipt scanning, extended statistics, broader automated tests, and release artwork/configuration. Expiry date and backup codec unit tests have been added, but the application has not yet been compiled or tested.
+Bulgarian localization, recipe favorites and dietary filters, extended statistics, broader automated tests, and release artwork/configuration. Expiry date, backup codec, and receipt parser unit tests have been added, but the application has not yet been compiled or tested.
