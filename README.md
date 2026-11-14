@@ -17,7 +17,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 - Reminder taps open the corresponding food item, and a daily WorkManager check refreshes future reminders against the current local date and selected reminder intervals.
 - Offline recipe suggestions with ingredient-match counts and missing ingredients.
 - Persistent recipe favorites and filters for meal type, quick meals, vegetarian, high-protein, low-cost, and use-soon recipes. Matching dishes are ranked higher when they use inventory nearing its entered date.
-- Persistent shopping list, including adding missing recipe ingredients.
+- Persistent shopping list, including adding missing recipe ingredients, purchased quantity/category display, and a confirmed add-to-inventory editor flow.
 - Week, month, and year impact summaries, weekly consumption and waste charts, and estimated value for items marked consumed when a price was entered. Discarded items are summarized by category, reason, and selected period.
 - Persisted System, Light, and Dark appearance modes. System mode follows the Android device setting.
 - CSV inventory export and versioned JSON backup/restore, with record validation and explicit replace confirmation.

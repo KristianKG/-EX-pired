@@ -294,7 +294,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     var showClearConfirmation by remember { mutableStateOf(false) }
     LaunchedEffect(transferMessage) { transferMessage?.let { snackbarHostState.showSnackbar(it); vm.clearTransferMessage() } }
     var showNotificationInfo by remember { mutableStateOf(false) }
-    var tab by remember { mutableIntStateOf(0) }; var editItem by remember { mutableStateOf<FoodItem?>(null) }; var adding by remember { mutableStateOf(false) }; var showShopping by remember { mutableStateOf(false) }; var showScanner by remember { mutableStateOf(false) }; var showReceiptScanner by remember { mutableStateOf(false) }; var pendingReceipt by remember { mutableStateOf<List<ReceiptCandidate>?>(null) }; var receiptIndex by remember { mutableIntStateOf(0) }
+    var tab by remember { mutableIntStateOf(0) }; var editItem by remember { mutableStateOf<FoodItem?>(null) }; var adding by remember { mutableStateOf(false) }; var pendingShoppingEntry by remember { mutableStateOf<ShoppingEntry?>(null) }; var showShopping by remember { mutableStateOf(false) }; var showScanner by remember { mutableStateOf(false) }; var showReceiptScanner by remember { mutableStateOf(false) }; var pendingReceipt by remember { mutableStateOf<List<ReceiptCandidate>?>(null) }; var receiptIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(notificationItemId, items) {
         val itemId = notificationItemId ?: return@LaunchedEffect
         items.firstOrNull { it.id == itemId }?.let { item ->
@@ -322,7 +322,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
                 2 -> RecipesScreen(items, padding, recipeFavorites, vm::toggleRecipeFavorite, vm::addShopping)
                 3 -> StatisticsScreen(items, history, padding)
                 else -> when {
-                    showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onBack = { showShopping = false })
+                    showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onMoveToInventory = { pendingShoppingEntry = it }, onBack = { showShopping = false })
                     showReceiptScanner -> ReceiptScannerScreen(onClose = { showReceiptScanner = false }, onConfirm = { receipt -> pendingReceipt = receipt; receiptIndex = 0; showReceiptScanner = false })
                     else -> SettingsScreen(
                     padding, themeMode, vm::setThemeMode, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, dailySummaryEnabled, vm::setDailySummaryEnabled, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, vm::setReminderEnabled,
@@ -339,15 +339,17 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         }
         LaunchedEffect(productPrefill) { if (productPrefill != null) adding = true }
         if (lookupLoading) AlertDialog(onDismissRequest = { }, title = { Text("Looking up product") }, text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(modifier = Modifier.size(22.dp)); Spacer(Modifier.width(12.dp)); Text("Expiration date will still need to be entered.") } }, confirmButton = {})
-        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null)) FoodEditor(editItem, storageLocations, initialName = productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = productPrefill?.category ?: "Other", onDismiss = { adding = false; editItem = null; vm.clearProductPrefill() }, onSave = { old, draft ->
+        val shoppingCandidate = pendingShoppingEntry
+        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null || shoppingCandidate != null)) FoodEditor(editItem, storageLocations, initialName = shoppingCandidate?.name ?: productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = shoppingCandidate?.category ?: productPrefill?.category ?: "Other", initialQuantity = shoppingCandidate?.quantity?.toDoubleOrNull() ?: 1.0, onDismiss = { adding = false; editItem = null; pendingShoppingEntry = null; vm.clearProductPrefill() }, onSave = { old, draft ->
             if (old == null) vm.add(draft) else vm.update(old, draft)
+            shoppingCandidate?.let(vm::removeShopping)
             vm.clearProductPrefill()
             if (old == null && !notificationPromptSeen) {
                 val alreadyAllowed = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                 if (!alreadyAllowed) showNotificationInfo = true else vm.markNotificationPromptSeen()
             }
-            adding = false; editItem = null
-        }, onDelete = { editItem?.let(vm::delete); editItem = null; vm.clearProductPrefill() })
+            adding = false; editItem = null; pendingShoppingEntry = null
+        }, onDelete = { editItem?.let(vm::delete); editItem = null; pendingShoppingEntry = null; vm.clearProductPrefill() })
         val receiptCandidate = pendingReceipt?.getOrNull(receiptIndex)
         if (onboardingComplete && receiptCandidate != null) FoodEditor(null, storageLocations, initialName = receiptCandidate.name, initialQuantity = receiptCandidate.quantity, initialPrice = receiptCandidate.price, onDismiss = { pendingReceipt = null; receiptIndex = 0 }, onSave = { _, draft ->
             vm.add(draft)
@@ -595,7 +597,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
 @Composable private fun ShoppingScreen(
     entries: List<ShoppingEntry>, padding: PaddingValues,
     onAdd: (String) -> Unit, onCheck: (ShoppingEntry, Boolean) -> Unit,
-    onRemove: (ShoppingEntry) -> Unit, onBack: () -> Unit
+    onRemove: (ShoppingEntry) -> Unit, onMoveToInventory: (ShoppingEntry) -> Unit, onBack: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 24.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -609,7 +611,8 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = entry.checked, onCheckedChange = { onCheck(entry, it) })
-                    Text(entry.name, modifier = Modifier.weight(1f), color = if (entry.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+                    Column(Modifier.weight(1f)) { Text(entry.name, color = if (entry.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface); if (entry.quantity != "1" || entry.category != "Other") Text(listOf(entry.quantity.takeIf { it != "1" }, entry.category.takeIf { it != "Other" }).filterNotNull().joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+                    IconButton(onClick = { onMoveToInventory(entry) }) { Icon(Icons.Rounded.Inventory2, "Add to inventory", tint = MaterialTheme.colorScheme.primary) }
                     IconButton(onClick = { onRemove(entry) }) { Icon(Icons.Rounded.Close, "Remove") }
                 }
             }
