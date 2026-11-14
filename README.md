@@ -9,7 +9,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 ## Implemented
 
 - Room persistence for food records and consumed history.
-- Add, edit, delete, partially or fully consume, search, and filter by storage location. Records include purchase/opened dates and notes; discarding asks for a reason and removes the item from the active inventory.
+- Add, edit, delete, partially or fully consume, search, and filter by storage location, category, or expiration status. Sort by expiration, name, added date, category, or purchase date. Records include purchase/opened dates and notes; discarding asks for a reason and removes the item from the active inventory.
 - Expiry urgency on the dashboard, including contextual use-soon suggestions.
 - WorkManager reminders at 7, 3, 1, and 0 days before the entered date. Android notification permission is requested after the first item is added; delivery time can vary due to Android background scheduling.
 - Configurable local reminder intervals at 14, 7, 3, 1, and 0 days.

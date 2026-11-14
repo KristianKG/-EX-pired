@@ -404,10 +404,17 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
 }
 
 @Composable private fun HomeScreen(items: List<FoodItem>, vm: ExpiryViewModel, padding: PaddingValues, inventory: Boolean, storageLocations: List<String>, displayName: String, onEdit: (FoodItem) -> Unit, onScan: () -> Unit = {}) {
-    val today = LocalDate.now(); var query by remember { mutableStateOf("") }; var filter by remember { mutableStateOf("All") }; var status by remember { mutableStateOf("Any status") }; var sort by remember { mutableStateOf("Soonest") }
+    val today = LocalDate.now(); var query by remember { mutableStateOf("") }; var filter by remember { mutableStateOf("All") }; var categoryFilter by remember { mutableStateOf("All") }; var status by remember { mutableStateOf("Any status") }; var sort by remember { mutableStateOf("Soonest") }
     val soon = items.filter { days(it, today) in 0..7 }; val expired = items.count { days(it, today) < 0 }
-    val visible = items.filter { food -> food.name.contains(query, true) && (filter == "All" || food.location == filter) && when (status) { "Expiring soon" -> days(food, today) in 0..7; "Expired" -> days(food, today) < 0; else -> true } }
-        .let { list -> when (sort) { "A to Z" -> list.sortedBy { it.name.lowercase() }; "Recently added" -> list.sortedByDescending { it.createdAt }; else -> list.sortedBy { it.expiresAt } } }
+    val categories = items.map { it.category.ifBlank { "Other" } }.distinct().sorted()
+    val visible = items.filter { food -> food.name.contains(query, true) && (filter == "All" || food.location == filter) && (categoryFilter == "All" || food.category == categoryFilter) && when (status) { "Expiring soon" -> days(food, today) in 0..7; "Expired" -> days(food, today) < 0; else -> true } }
+        .let { list -> when (sort) {
+            "A to Z" -> list.sortedBy { it.name.lowercase() }
+            "Recently added" -> list.sortedByDescending { it.createdAt }
+            "Category" -> list.sortedWith(compareBy<FoodItem> { it.category.lowercase() }.thenBy { it.name.lowercase() })
+            "Purchase date" -> list.sortedWith(compareBy<FoodItem> { it.purchasedAt ?: Long.MAX_VALUE }.thenBy { it.expiresAt })
+            else -> list.sortedBy { it.expiresAt }
+        } }
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 100.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             Text(if (inventory) "YOUR KITCHEN" else greeting(displayName), style = MaterialTheme.typography.labelLarge, color = Forest, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
@@ -424,8 +431,9 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         } }
         if (inventory) item { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { (listOf("All") + storageLocations).forEach { FilterChip(filter == it, { filter = it }, label = { Text(it) }) } }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { (listOf("All") + categories).forEach { category -> FilterChip(categoryFilter == category, { categoryFilter = category }, label = { Text(category) }) } }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Any status", "Expiring soon", "Expired").forEach { FilterChip(status == it, { status = it }, label = { Text(it) }) } }
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Soonest", "A to Z", "Recently added").forEach { FilterChip(sort == it, { sort = it }, label = { Text(it) }) } }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Soonest", "A to Z", "Recently added", "Category", "Purchase date").forEach { FilterChip(sort == it, { sort = it }, label = { Text(it) }) } }
         } }
         item { Row(verticalAlignment = Alignment.CenterVertically) { Text(if (inventory) "All items" else "Use these first", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); if (soon.isNotEmpty() && !inventory) Text("${soon.size} soon", color = Forest, fontWeight = FontWeight.SemiBold) } }
         if (visible.isEmpty()) item { if (items.isEmpty()) EmptyCard() else Text("No food matches these filters yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) } else this.items(visible, key = { it.id }) { food -> FoodCard(food, today, onConsume = { amount -> vm.consume(food, amount) }, onDiscard = { reason -> vm.discard(food, reason) }, onClick = { onEdit(food) }) }
