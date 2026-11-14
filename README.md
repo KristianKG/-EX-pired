@@ -28,9 +28,13 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 - Original adaptive launcher artwork, Android 12+ splash screen, and monochrome notification icon.
 - Release minification/resource shrinking configuration and explicit Java/Kotlin JVM 17 targets. Device backup is disabled; users can make their own JSON backups.
 
+## Initial milestone
+
+The first usable offline product milestone is complete: onboarding, local inventory, expiration reminders, assisted barcode and receipt entry, recipes, shopping, statistics, personalization, backup, and a successful debug build are in place. This is an implementation milestone, not a Play Store release.
+
 ## Still outstanding
 
-The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes recipe imagery and expanded recipe variety, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. Users can add custom storage locations and categories in Settings. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
+The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes recipe imagery and expanded recipe variety, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. A signed release bundle and device-level notification/camera/OCR checks are still needed before publication. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
 
 ## Build verification
 
