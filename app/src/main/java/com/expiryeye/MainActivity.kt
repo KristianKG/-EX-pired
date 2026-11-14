@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -106,6 +107,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     val history = dao.all().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val shopping = dao.shoppingList().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val darkKey = booleanPreferencesKey("dark_theme")
+    private val themeModeKey = stringPreferencesKey("theme_mode")
     private val notificationPromptKey = booleanPreferencesKey("notification_prompt_seen")
     private val reminderDaysKey = stringSetPreferencesKey("reminder_days")
     private val recipeFavoritesKey = stringSetPreferencesKey("favorite_recipes")
@@ -113,7 +115,9 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     private val dailySummaryKey = booleanPreferencesKey("daily_summary_enabled")
     private val onboardingKey = booleanPreferencesKey("onboarding_complete")
     private val displayNameKey = stringPreferencesKey("display_name")
-    val darkTheme = appContext.settingsStore.data.map { it[darkKey] ?: false }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val themeMode = appContext.settingsStore.data.map { prefs ->
+        prefs[themeModeKey] ?: prefs[darkKey]?.let { if (it) "Dark" else "Light" } ?: "System"
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "System")
     val notificationPromptSeen = appContext.settingsStore.data.map { it[notificationPromptKey] ?: false }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     val onboardingComplete = appContext.settingsStore.data.map { it[onboardingKey] ?: false }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val displayName = appContext.settingsStore.data.map { it[displayNameKey].orEmpty() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
@@ -137,7 +141,10 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     val productPrefill = _productPrefill.asStateFlow()
     private val _lookupLoading = MutableStateFlow(false)
     val lookupLoading = _lookupLoading.asStateFlow()
-    fun setDarkTheme(enabled: Boolean) { viewModelScope.launch { appContext.settingsStore.edit { it[darkKey] = enabled } } }
+    fun setThemeMode(mode: String) {
+        if (mode !in setOf("System", "Light", "Dark")) return
+        viewModelScope.launch { appContext.settingsStore.edit { prefs -> prefs[themeModeKey] = mode; prefs.remove(darkKey) } }
+    }
     fun setDailySummaryEnabled(enabled: Boolean) { viewModelScope.launch { appContext.settingsStore.edit { it[dailySummaryKey] = enabled } } }
     fun markNotificationPromptSeen() { viewModelScope.launch { appContext.settingsStore.edit { it[notificationPromptKey] = true } } }
     fun completeOnboarding() { viewModelScope.launch { appContext.settingsStore.edit { it[onboardingKey] = true } } }
@@ -267,7 +274,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
 
 @Composable fun ExpiryEyeApp(vm: ExpiryViewModel, notificationItemId: Long? = null, onNotificationHandled: () -> Unit = {}) {
     val items by vm.active.collectAsState(); val history by vm.history.collectAsState(); val shopping by vm.shopping.collectAsState()
-    val darkTheme by vm.darkTheme.collectAsState()
+    val themeMode by vm.themeMode.collectAsState()
     val onboardingComplete by vm.onboardingComplete.collectAsState()
     val displayName by vm.displayName.collectAsState()
     val recipeFavorites by vm.recipeFavorites.collectAsState()
@@ -296,7 +303,8 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             onNotificationHandled()
         }
     }
-    MaterialTheme(colorScheme = if (darkTheme) darkColorScheme(primary = Mint, secondary = Color(0xFF78C99E)) else lightColorScheme(primary = Forest, secondary = Color(0xFF3A8060), background = Canvas, surface = Color.White, onBackground = Color(0xFF17231D))) {
+    val useDarkColors = themeMode == "Dark" || (themeMode == "System" && isSystemInDarkTheme())
+    MaterialTheme(colorScheme = if (useDarkColors) darkColorScheme(primary = Mint, secondary = Color(0xFF78C99E)) else lightColorScheme(primary = Forest, secondary = Color(0xFF3A8060), background = Canvas, surface = Color.White, onBackground = Color(0xFF17231D))) {
         Scaffold(containerColor = MaterialTheme.colorScheme.background, snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = { if (onboardingComplete && !showScanner && !showReceiptScanner) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 listOf(Icons.Rounded.Home to "Home", Icons.Rounded.Inventory2 to "Food", Icons.Rounded.Restaurant to "Recipes", Icons.Rounded.BarChart to "Stats", Icons.Rounded.Settings to "Settings").forEachIndexed { i, pair ->
@@ -317,7 +325,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
                     showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onBack = { showShopping = false })
                     showReceiptScanner -> ReceiptScannerScreen(onClose = { showReceiptScanner = false }, onConfirm = { receipt -> pendingReceipt = receipt; receiptIndex = 0; showReceiptScanner = false })
                     else -> SettingsScreen(
-                    padding, darkTheme, vm::setDarkTheme, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, dailySummaryEnabled, vm::setDailySummaryEnabled, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, vm::setReminderEnabled,
+                    padding, themeMode, vm::setThemeMode, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, dailySummaryEnabled, vm::setDailySummaryEnabled, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, vm::setReminderEnabled,
                     onNotificationSettings = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) },
                     onShopping = { showShopping = true },
                     onScanReceipt = { showReceiptScanner = true },
@@ -601,14 +609,14 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
     }
 }
 
-@Composable private fun SettingsScreen(padding: PaddingValues, darkTheme: Boolean, onDarkTheme: (Boolean) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, dailySummaryEnabled: Boolean, onDailySummaryEnabled: (Boolean) -> Unit, storageLocations: List<String>, onAddStorageLocation: (String) -> Unit, onRemoveStorageLocation: (String) -> Unit, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
+@Composable private fun SettingsScreen(padding: PaddingValues, themeMode: String, onThemeMode: (String) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, dailySummaryEnabled: Boolean, onDailySummaryEnabled: (Boolean) -> Unit, storageLocations: List<String>, onAddStorageLocation: (String) -> Unit, onRemoveStorageLocation: (String) -> Unit, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
     var name by remember(displayName) { mutableStateOf(displayName) }
     var newStorageLocation by remember { mutableStateOf("") }
     val customStorageLocations = storageLocations.filterNot { location -> defaultStorageLocations.any { it.equals(location, ignoreCase = true) } }
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 28.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("MAKE IT YOURS", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp); Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Your name", fontWeight = FontWeight.SemiBold); Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(name, { name = it.take(40) }, modifier = Modifier.weight(1f), placeholder = { Text("What should we call you?") }, singleLine = true); TextButton(onClick = { onDisplayName(name) }) { Text("Save") } } } } }
-        item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Rounded.Palette, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text("Dark theme", Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Switch(darkTheme, onDarkTheme) } } }
+        item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Rounded.Palette, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text("Appearance", fontWeight = FontWeight.SemiBold) }; Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("System", "Light", "Dark").forEach { mode -> FilterChip(selected = themeMode == mode, onClick = { onThemeMode(mode) }, label = { Text(mode) }) } } } } }
         item { SettingRow("Language", "English", Icons.Rounded.Language) }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Storage locations", fontWeight = FontWeight.SemiBold)
