@@ -57,6 +57,7 @@ import java.time.format.DateTimeFormatter
 private val Forest = Color(0xFF174C3A)
 private val Mint = Color(0xFFBFE8D2)
 private val Canvas = Color(0xFFF7F8F3)
+private val defaultStorageLocations = listOf("Fridge", "Freezer", "Pantry")
 private val Context.settingsStore by preferencesDataStore(name = "expiryeye_settings")
 
 data class FoodDraft(
@@ -107,6 +108,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     private val notificationPromptKey = booleanPreferencesKey("notification_prompt_seen")
     private val reminderDaysKey = stringSetPreferencesKey("reminder_days")
     private val recipeFavoritesKey = stringSetPreferencesKey("favorite_recipes")
+    private val customLocationsKey = stringSetPreferencesKey("custom_storage_locations")
     private val onboardingKey = booleanPreferencesKey("onboarding_complete")
     private val displayNameKey = stringPreferencesKey("display_name")
     val darkTheme = appContext.settingsStore.data.map { it[darkKey] ?: false }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
@@ -114,6 +116,12 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     val onboardingComplete = appContext.settingsStore.data.map { it[onboardingKey] ?: false }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val displayName = appContext.settingsStore.data.map { it[displayNameKey].orEmpty() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
     val recipeFavorites = appContext.settingsStore.data.map { it[recipeFavoritesKey] ?: emptySet() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+    val storageLocations = appContext.settingsStore.data.map { prefs ->
+        val custom = prefs[customLocationsKey].orEmpty().filter { location ->
+            location.isNotBlank() && defaultStorageLocations.none { it.equals(location, ignoreCase = true) }
+        }.distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
+        defaultStorageLocations + custom
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultStorageLocations)
     val reminderDays = appContext.settingsStore.data.map { prefs ->
         (prefs[reminderDaysKey]?.mapNotNull(String::toIntOrNull) ?: defaultReminderOffsets).filter { it in listOf(14, 7, 3, 1, 0) }.distinct().sortedDescending()
     }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultReminderOffsets)
@@ -134,6 +142,21 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         if (!favorites.add(name)) favorites.remove(name)
         prefs[recipeFavoritesKey] = favorites
     } } }
+    fun addStorageLocation(value: String) {
+        val name = value.trim().take(32)
+        if (name.isBlank() || defaultStorageLocations.any { it.equals(name, ignoreCase = true) }) return
+        viewModelScope.launch { appContext.settingsStore.edit { prefs ->
+            val locations = prefs[customLocationsKey]?.toMutableSet() ?: mutableSetOf()
+            if (locations.none { it.equals(name, ignoreCase = true) }) locations.add(name)
+            prefs[customLocationsKey] = locations
+        } }
+    }
+    fun removeStorageLocation(name: String) {
+        if (defaultStorageLocations.any { it.equals(name, ignoreCase = true) }) return
+        viewModelScope.launch { appContext.settingsStore.edit { prefs ->
+            prefs[customLocationsKey] = prefs[customLocationsKey].orEmpty().filterNot { it.equals(name, ignoreCase = true) }.toSet()
+        } }
+    }
     fun setReminderEnabled(days: Int, enabled: Boolean) { viewModelScope.launch { appContext.settingsStore.edit { prefs ->
         val current = prefs[reminderDaysKey]?.toMutableSet() ?: defaultReminderOffsets.map(Int::toString).toMutableSet()
         if (enabled) current.add(days.toString()) else current.remove(days.toString())
@@ -240,6 +263,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     val onboardingComplete by vm.onboardingComplete.collectAsState()
     val displayName by vm.displayName.collectAsState()
     val recipeFavorites by vm.recipeFavorites.collectAsState()
+    val storageLocations by vm.storageLocations.collectAsState()
     val productPrefill by vm.productPrefill.collectAsState()
     val lookupLoading by vm.lookupLoading.collectAsState()
     val notificationPromptSeen by vm.notificationPromptSeen.collectAsState()
@@ -275,16 +299,16 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             if (!onboardingComplete) OnboardingScreen(Modifier.padding(padding)) { addFirst ->
                 vm.completeOnboarding(); if (addFirst) adding = true
             } else when (tab) {
-                0 -> HomeScreen(items, vm, padding, false, displayName = displayName, onEdit = { editItem = it })
+                0 -> HomeScreen(items, vm, padding, false, storageLocations, displayName = displayName, onEdit = { editItem = it })
                 1 -> if (showScanner) BarcodeScannerScreen(onClose = { showScanner = false }, onBarcode = { showScanner = false; vm.lookupBarcode(it) })
-                    else HomeScreen(items, vm, padding, true, displayName = displayName, onEdit = { editItem = it }, onScan = { showScanner = true })
+                    else HomeScreen(items, vm, padding, true, storageLocations, displayName = displayName, onEdit = { editItem = it }, onScan = { showScanner = true })
                 2 -> RecipesScreen(items, padding, recipeFavorites, vm::toggleRecipeFavorite, vm::addShopping)
                 3 -> StatisticsScreen(items, history, padding)
                 else -> when {
                     showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onBack = { showShopping = false })
                     showReceiptScanner -> ReceiptScannerScreen(onClose = { showReceiptScanner = false }, onConfirm = { receipt -> pendingReceipt = receipt; receiptIndex = 0; showReceiptScanner = false })
                     else -> SettingsScreen(
-                    padding, darkTheme, vm::setDarkTheme, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, vm::setReminderEnabled,
+                    padding, darkTheme, vm::setDarkTheme, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, vm::setReminderEnabled,
                     onNotificationSettings = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) },
                     onShopping = { showShopping = true },
                     onScanReceipt = { showReceiptScanner = true },
@@ -298,7 +322,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         }
         LaunchedEffect(productPrefill) { if (productPrefill != null) adding = true }
         if (lookupLoading) AlertDialog(onDismissRequest = { }, title = { Text("Looking up product") }, text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(modifier = Modifier.size(22.dp)); Spacer(Modifier.width(12.dp)); Text("Expiration date will still need to be entered.") } }, confirmButton = {})
-        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null)) FoodEditor(editItem, initialName = productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = productPrefill?.category ?: "Other", onDismiss = { adding = false; editItem = null; vm.clearProductPrefill() }, onSave = { old, draft ->
+        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null)) FoodEditor(editItem, storageLocations, initialName = productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = productPrefill?.category ?: "Other", onDismiss = { adding = false; editItem = null; vm.clearProductPrefill() }, onSave = { old, draft ->
             if (old == null) vm.add(draft) else vm.update(old, draft)
             vm.clearProductPrefill()
             if (old == null && !notificationPromptSeen) {
@@ -308,7 +332,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             adding = false; editItem = null
         }, onDelete = { editItem?.let(vm::delete); editItem = null; vm.clearProductPrefill() })
         val receiptCandidate = pendingReceipt?.getOrNull(receiptIndex)
-        if (onboardingComplete && receiptCandidate != null) FoodEditor(null, initialName = receiptCandidate.name, initialQuantity = receiptCandidate.quantity, initialPrice = receiptCandidate.price, onDismiss = { pendingReceipt = null; receiptIndex = 0 }, onSave = { _, draft ->
+        if (onboardingComplete && receiptCandidate != null) FoodEditor(null, storageLocations, initialName = receiptCandidate.name, initialQuantity = receiptCandidate.quantity, initialPrice = receiptCandidate.price, onDismiss = { pendingReceipt = null; receiptIndex = 0 }, onSave = { _, draft ->
             vm.add(draft)
             if (receiptIndex == pendingReceipt.orEmpty().lastIndex && !notificationPromptSeen) {
                 val alreadyAllowed = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -362,7 +386,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     }
 }
 
-@Composable private fun HomeScreen(items: List<FoodItem>, vm: ExpiryViewModel, padding: PaddingValues, inventory: Boolean, displayName: String, onEdit: (FoodItem) -> Unit, onScan: () -> Unit = {}) {
+@Composable private fun HomeScreen(items: List<FoodItem>, vm: ExpiryViewModel, padding: PaddingValues, inventory: Boolean, storageLocations: List<String>, displayName: String, onEdit: (FoodItem) -> Unit, onScan: () -> Unit = {}) {
     val today = LocalDate.now(); var query by remember { mutableStateOf("") }; var filter by remember { mutableStateOf("All") }; var status by remember { mutableStateOf("Any status") }; var sort by remember { mutableStateOf("Soonest") }
     val soon = items.filter { days(it, today) in 0..7 }; val expired = items.count { days(it, today) < 0 }
     val visible = items.filter { food -> food.name.contains(query, true) && (filter == "All" || food.location == filter) && when (status) { "Expiring soon" -> days(food, today) in 0..7; "Expired" -> days(food, today) < 0; else -> true } }
@@ -382,7 +406,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             OutlinedButton(onClick = onScan, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan barcode") }
         } }
         if (inventory) item { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("All", "Fridge", "Freezer", "Pantry").forEach { FilterChip(filter == it, { filter = it }, label = { Text(it) }) } }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { (listOf("All") + storageLocations).forEach { FilterChip(filter == it, { filter = it }, label = { Text(it) }) } }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Any status", "Expiring soon", "Expired").forEach { FilterChip(status == it, { status = it }, label = { Text(it) }) } }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Soonest", "A to Z", "Recently added").forEach { FilterChip(sort == it, { sort = it }, label = { Text(it) }) } }
         } }
@@ -554,13 +578,24 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
     }
 }
 
-@Composable private fun SettingsScreen(padding: PaddingValues, darkTheme: Boolean, onDarkTheme: (Boolean) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
+@Composable private fun SettingsScreen(padding: PaddingValues, darkTheme: Boolean, onDarkTheme: (Boolean) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, storageLocations: List<String>, onAddStorageLocation: (String) -> Unit, onRemoveStorageLocation: (String) -> Unit, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
     var name by remember(displayName) { mutableStateOf(displayName) }
+    var newStorageLocation by remember { mutableStateOf("") }
+    val customStorageLocations = storageLocations.filterNot { location -> defaultStorageLocations.any { it.equals(location, ignoreCase = true) } }
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 28.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("MAKE IT YOURS", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp); Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Your name", fontWeight = FontWeight.SemiBold); Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(name, { name = it.take(40) }, modifier = Modifier.weight(1f), placeholder = { Text("What should we call you?") }, singleLine = true); TextButton(onClick = { onDisplayName(name) }) { Text("Save") } } } } }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Rounded.Palette, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text("Dark theme", Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Switch(darkTheme, onDarkTheme) } } }
         item { SettingRow("Language", "English", Icons.Rounded.Language) }
+        item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Storage locations", fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(newStorageLocation, { newStorageLocation = it.take(32) }, modifier = Modifier.weight(1f), label = { Text("Add a place") }, singleLine = true)
+                FilledIconButton(onClick = { onAddStorageLocation(newStorageLocation); newStorageLocation = "" }, enabled = newStorageLocation.isNotBlank()) { Icon(Icons.Rounded.Add, "Add location") }
+            }
+            if (customStorageLocations.isEmpty()) Text("Fridge, freezer, and pantry are always available.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { customStorageLocations.forEach { location -> AssistChip(onClick = { onRemoveStorageLocation(location) }, label = { Text(location) }, leadingIcon = { Icon(Icons.Rounded.Close, contentDescription = "Remove $location") }) } }
+        } } }
         item { Text("Expiration reminders", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Remind me", fontWeight = FontWeight.SemiBold)
@@ -616,7 +651,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun FoodEditor(item: FoodItem?, initialName: String = "", initialBrand: String = "", initialBarcode: String = "", initialCategory: String = "Other", initialQuantity: Double = 1.0, initialPrice: Double? = null, onDismiss: () -> Unit, onSave: (FoodItem?, FoodDraft) -> Unit, onDelete: () -> Unit) {
+@Composable private fun FoodEditor(item: FoodItem?, storageLocations: List<String>, initialName: String = "", initialBrand: String = "", initialBarcode: String = "", initialCategory: String = "Other", initialQuantity: Double = 1.0, initialPrice: Double? = null, onDismiss: () -> Unit, onSave: (FoodItem?, FoodDraft) -> Unit, onDelete: () -> Unit) {
     val editorKey = item?.id?.toString() ?: "$initialBarcode:$initialName"
     var name by remember(editorKey) { mutableStateOf(item?.name ?: initialName) }; var brand by remember(editorKey) { mutableStateOf(item?.brand ?: initialBrand) }; var barcode by remember(editorKey) { mutableStateOf(item?.barcode ?: initialBarcode) }; var category by remember(editorKey) { mutableStateOf(item?.category ?: initialCategory) }; var quantity by remember(editorKey) { mutableStateOf(item?.quantity?.toString() ?: initialQuantity.toString()) }; var unit by remember(editorKey) { mutableStateOf(item?.unit ?: "pcs") }
     var date by remember(editorKey) { mutableStateOf(item?.let { Instant.ofEpochMilli(it.expiresAt).atZone(ZoneId.systemDefault()).toLocalDate() } ?: LocalDate.now().plusDays(7)) }; var dateConfirmed by remember(editorKey) { mutableStateOf(item != null) }; var location by remember(editorKey) { mutableStateOf(item?.location ?: "Fridge") }; var price by remember(editorKey) { mutableStateOf(item?.price?.toString() ?: initialPrice?.toString().orEmpty()) }; var dateOpen by remember(editorKey) { mutableStateOf(false) }
@@ -633,7 +668,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
             OptionalDateField("Purchase date", purchasedOn, { purchasedOn = it })
             OptionalDateField("Date opened", openedOn, { openedOn = it })
             OutlinedButton(onClick = { dateOpen = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.CalendarMonth, null); Spacer(Modifier.width(8.dp)); Text(if (dateConfirmed) "Expires ${date.format(DateTimeFormatter.ofPattern("d MMM yyyy"))}" else "Choose expiration date") }
-            Text("Storage", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { listOf("Fridge", "Freezer", "Pantry").forEach { FilterChip(location == it, { location = it }, label = { Text(it) }) } }
+            Text("Storage", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) { (storageLocations + location).distinct().forEach { FilterChip(location == it, { location = it }, label = { Text(it) }) } }
             OutlinedTextField(price, { price = it }, label = { Text("Price (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
             OutlinedTextField(notes, { notes = it.take(500) }, label = { Text("Notes (optional)") }, minLines = 2, maxLines = 4)
         }

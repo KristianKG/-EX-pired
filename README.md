@@ -29,7 +29,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 
 ## Still outstanding
 
-The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes custom storage locations, richer recipe content (images, servings, difficulty), daily summary, waste trends by category and time, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
+The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes richer recipe content (images, servings, difficulty), daily summary, waste trends by category and time, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. Users can add custom storage locations in Settings and select them when editing products. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
 
 ## Build verification
 
