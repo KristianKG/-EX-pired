@@ -13,6 +13,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 - Expiry urgency on the dashboard, including contextual use-soon suggestions.
 - WorkManager reminders at 7, 3, 1, and 0 days before the entered date. Android notification permission is requested after the first item is added; delivery time can vary due to Android background scheduling.
 - Configurable local reminder intervals at 14, 7, 3, 1, and 0 days.
+- Reminder taps open the corresponding food item, and a daily WorkManager check refreshes future reminders against the current local date and selected reminder intervals.
 - Offline recipe suggestions with ingredient-match counts and missing ingredients.
 - Persistent recipe favorites and filters for meal type, quick meals, vegetarian, high-protein, low-cost, and use-soon recipes. Matching dishes are ranked higher when they use inventory nearing its entered date.
 - Persistent shopping list, including adding missing recipe ingredients.
@@ -28,7 +29,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 
 ## Still outstanding
 
-The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes full food lifecycle fields and actions (opened/purchase dates, notes, discard reasons, partial quantities, custom locations), richer recipe content (images, servings, difficulty), daily summary and notification tap routing, discarded-food waste trends, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
+The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes full food lifecycle fields and actions (opened/purchase dates, notes, discard reasons, partial quantities, custom locations), richer recipe content (images, servings, difficulty), daily summary, discarded-food waste trends, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
 
 ## Build verification
 

@@ -38,6 +38,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expiryeye.data.*
 import com.expiryeye.notifications.ExpiryReminderWorker
+import com.expiryeye.notifications.DailyExpiryCheckWorker
 import com.expiryeye.domain.daysUntilExpiry
 import com.expiryeye.domain.defaultReminderOffsets
 import com.expiryeye.domain.ReceiptCandidate
@@ -58,15 +59,26 @@ private val Canvas = Color(0xFFF7F8F3)
 private val Context.settingsStore by preferencesDataStore(name = "expiryeye_settings")
 
 class MainActivity : ComponentActivity() {
+    private var notificationItemId by mutableStateOf<Long?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        notificationItemId = intent?.getLongExtra(EXTRA_OPEN_ITEM_ID, -1L)?.takeIf { it >= 0L }
         val dao = ExpiryDatabase.get(this).foodDao()
         val factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ExpiryViewModel(dao, applicationContext) as T
         }
-        setContent { val vm: ExpiryViewModel = viewModel(factory = factory); ExpiryEyeApp(vm) }
+        setContent { val vm: ExpiryViewModel = viewModel(factory = factory); ExpiryEyeApp(vm, notificationItemId) { notificationItemId = null } }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationItemId = intent.getLongExtra(EXTRA_OPEN_ITEM_ID, -1L).takeIf { it >= 0L }
+    }
+
+    companion object { const val EXTRA_OPEN_ITEM_ID = "com.expiryeye.OPEN_ITEM_ID" }
 }
 
 class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context) : ViewModel() {
@@ -117,7 +129,10 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         result.message?.let { _transferMessage.value = it }
     } }
     fun clearProductPrefill() { _productPrefill.value = null }
-    init { viewModelScope.launch { reminderDays.collect { offsets -> ExpiryReminderWorker.rescheduleAll(appContext, dao.activeNow(), offsets) } } }
+    init { viewModelScope.launch { reminderDays.collect { offsets ->
+        ExpiryReminderWorker.rescheduleAll(appContext, dao.activeNow(), offsets)
+        DailyExpiryCheckWorker.schedule(appContext, offsets)
+    } } }
     fun add(name: String, category: String, quantity: Double, unit: String, date: LocalDate, location: String, price: Double?, brand: String, barcode: String) {
         viewModelScope.launch { val item = FoodItem(name = name.trim(), category = category, quantity = quantity, unit = unit, expiresAt = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(), location = location, price = price, brand = brand.trim(), barcode = barcode.trim()); val id = dao.insert(item); ExpiryReminderWorker.schedule(appContext, item.copy(id = id), reminderDays.first()) }
     }
@@ -179,7 +194,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     fun clearTransferMessage() { _transferMessage.value = null }
 }
 
-@Composable fun ExpiryEyeApp(vm: ExpiryViewModel) {
+@Composable fun ExpiryEyeApp(vm: ExpiryViewModel, notificationItemId: Long? = null, onNotificationHandled: () -> Unit = {}) {
     val items by vm.active.collectAsState(); val history by vm.history.collectAsState(); val shopping by vm.shopping.collectAsState()
     val darkTheme by vm.darkTheme.collectAsState()
     val onboardingComplete by vm.onboardingComplete.collectAsState()
@@ -200,6 +215,14 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     LaunchedEffect(transferMessage) { transferMessage?.let { snackbarHostState.showSnackbar(it); vm.clearTransferMessage() } }
     var showNotificationInfo by remember { mutableStateOf(false) }
     var tab by remember { mutableIntStateOf(0) }; var editItem by remember { mutableStateOf<FoodItem?>(null) }; var adding by remember { mutableStateOf(false) }; var showShopping by remember { mutableStateOf(false) }; var showScanner by remember { mutableStateOf(false) }; var showReceiptScanner by remember { mutableStateOf(false) }; var pendingReceipt by remember { mutableStateOf<List<ReceiptCandidate>?>(null) }; var receiptIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(notificationItemId, items) {
+        val itemId = notificationItemId ?: return@LaunchedEffect
+        items.firstOrNull { it.id == itemId }?.let { item ->
+            tab = 1
+            editItem = item
+            onNotificationHandled()
+        }
+    }
     MaterialTheme(colorScheme = if (darkTheme) darkColorScheme(primary = Mint, secondary = Color(0xFF78C99E)) else lightColorScheme(primary = Forest, secondary = Color(0xFF3A8060), background = Canvas, surface = Color.White, onBackground = Color(0xFF17231D))) {
         Scaffold(containerColor = MaterialTheme.colorScheme.background, snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = { if (onboardingComplete && !showScanner && !showReceiptScanner) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {

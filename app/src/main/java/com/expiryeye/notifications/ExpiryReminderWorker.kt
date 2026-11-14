@@ -3,7 +3,9 @@ package com.expiryeye.notifications
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
@@ -18,6 +20,7 @@ import androidx.work.workDataOf
 import com.expiryeye.data.ExpiryDatabase
 import com.expiryeye.data.FoodItem
 import com.expiryeye.domain.defaultReminderOffsets
+import com.expiryeye.MainActivity
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -47,10 +50,20 @@ class ExpiryReminderWorker(context: Context, params: WorkerParameters) : Corouti
         }
         val title = if (days == 0) "${item.name} expires today" else "${item.name} is expiring soon"
         val body = when (days) { 0 -> "Check the date and decide whether to use it today."; 1 -> "${item.name} expires tomorrow. Consider using it soon."; else -> "${item.name} expires in $days days. Consider planning to use it." }
+        val openItemIntent = Intent(applicationContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(MainActivity.EXTRA_OPEN_ITEM_ID, item.id)
+        }
+        val contentIntent = PendingIntent.getActivity(
+            applicationContext,
+            item.id.toInt(),
+            openItemIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(com.expiryeye.R.drawable.ic_stat_expiry)
             .setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT).setAutoCancel(true).build()
+            .setContentIntent(contentIntent).setPriority(NotificationCompat.PRIORITY_DEFAULT).setAutoCancel(true).build()
         NotificationManagerCompat.from(applicationContext).notify("expiry-${item.id}-$days", item.id.toInt() + days, notification)
     }
 
