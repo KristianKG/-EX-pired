@@ -37,7 +37,7 @@ class ExpiryReminderWorker(context: Context, params: WorkerParameters) : Corouti
         val offset = inputData.getInt(KEY_OFFSET, -1)
         if (itemId < 0 || offset !in 0..365) return Result.failure()
         val item = ExpiryDatabase.get(applicationContext).foodDao().find(itemId) ?: return Result.success()
-        if (item.consumedAt != null) return Result.success()
+        if (item.consumedAt != null || item.discardedAt != null) return Result.success()
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return Result.success()
         show(item, offset)
         return Result.success()
@@ -70,7 +70,7 @@ class ExpiryReminderWorker(context: Context, params: WorkerParameters) : Corouti
     companion object {
         fun schedule(context: Context, item: FoodItem, offsets: List<Int> = defaultReminderOffsets) {
             cancel(context, item.id)
-            if (item.consumedAt != null) return
+            if (item.consumedAt != null || item.discardedAt != null) return
             val manager = WorkManager.getInstance(context)
             val expiry = Instant.ofEpochMilli(item.expiresAt).atZone(ZoneId.systemDefault()).toLocalDate()
             offsets.distinct().filter { it in reminderOptions }.forEach { offset ->

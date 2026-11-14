@@ -26,18 +26,22 @@ object InventoryBackupCodec {
         require(value.foodItems.all { item ->
             item.id >= 0 && item.name.isNotBlank() && item.category.isNotBlank() && item.quantity.isFinite() && item.quantity > 0 &&
                 item.expiresAt > 0 && item.createdAt > 0 && (item.price == null || item.price.isFinite() && item.price >= 0) &&
-                (item.consumedAt == null || item.consumedAt > 0)
+                (item.consumedAt == null || item.consumedAt > 0) &&
+                (item.purchasedAt == null || item.purchasedAt > 0) && (item.openedAt == null || item.openedAt > 0) &&
+                item.updatedAt >= 0 && (item.discardedAt == null || item.discardedAt > 0) &&
+                (item.discardReason == null || item.discardReason in setOf("Expired", "Spoiled", "Unwanted", "Other"))
         }) { "The backup has invalid food records." }
         require(value.shoppingItems.all { it.id >= 0 && it.name.isNotBlank() && it.quantity.isNotBlank() }) { "The backup has invalid shopping records." }
         return value
     }
 
     fun toCsv(items: List<FoodItem>): String = buildString {
-        appendLine("name,brand,category,quantity,unit,expires_on,location,price,barcode,created_at,consumed_at")
+        appendLine("name,brand,category,quantity,unit,expires_on,purchased_at,opened_at,location,price,barcode,notes,created_at,updated_at,consumed_at,discarded_at,discard_reason")
         val formatter = DateTimeFormatter.ISO_LOCAL_DATE
         items.forEach { item ->
             val date = Instant.ofEpochMilli(item.expiresAt).atZone(ZoneId.systemDefault()).toLocalDate().format(formatter)
-            appendLine(listOf(item.name, item.brand, item.category, item.quantity.toString(), item.unit, date, item.location, item.price?.toString().orEmpty(), item.barcode, item.createdAt.toString(), item.consumedAt?.toString().orEmpty()).joinToString(",") { csv(it) })
+            fun dateValue(value: Long?): String = value?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate().format(formatter) }.orEmpty()
+            appendLine(listOf(item.name, item.brand, item.category, item.quantity.toString(), item.unit, date, dateValue(item.purchasedAt), dateValue(item.openedAt), item.location, item.price?.toString().orEmpty(), item.barcode, item.notes, item.createdAt.toString(), item.updatedAt.toString(), item.consumedAt?.toString().orEmpty(), item.discardedAt?.toString().orEmpty(), item.discardReason.orEmpty()).joinToString(",") { csv(it) })
         }
     }
 

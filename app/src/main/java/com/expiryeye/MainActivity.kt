@@ -58,6 +58,23 @@ private val Mint = Color(0xFFBFE8D2)
 private val Canvas = Color(0xFFF7F8F3)
 private val Context.settingsStore by preferencesDataStore(name = "expiryeye_settings")
 
+data class FoodDraft(
+    val name: String,
+    val category: String,
+    val quantity: Double,
+    val unit: String,
+    val expiresOn: LocalDate,
+    val location: String,
+    val price: Double?,
+    val brand: String,
+    val barcode: String,
+    val purchasedOn: LocalDate?,
+    val openedOn: LocalDate?,
+    val notes: String
+)
+
+private fun LocalDate.toStoredMillis(): Long = atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+
 class MainActivity : ComponentActivity() {
     private var notificationItemId by mutableStateOf<Long?>(null)
 
@@ -133,14 +150,25 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         ExpiryReminderWorker.rescheduleAll(appContext, dao.activeNow(), offsets)
         DailyExpiryCheckWorker.schedule(appContext, offsets)
     } } }
-    fun add(name: String, category: String, quantity: Double, unit: String, date: LocalDate, location: String, price: Double?, brand: String, barcode: String) {
-        viewModelScope.launch { val item = FoodItem(name = name.trim(), category = category, quantity = quantity, unit = unit, expiresAt = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(), location = location, price = price, brand = brand.trim(), barcode = barcode.trim()); val id = dao.insert(item); ExpiryReminderWorker.schedule(appContext, item.copy(id = id), reminderDays.first()) }
+    fun add(draft: FoodDraft) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val item = FoodItem(name = draft.name.trim(), category = draft.category, quantity = draft.quantity, unit = draft.unit, expiresAt = draft.expiresOn.toStoredMillis(), location = draft.location, price = draft.price, brand = draft.brand.trim(), barcode = draft.barcode.trim(), purchasedAt = draft.purchasedOn?.toStoredMillis(), openedAt = draft.openedOn?.toStoredMillis(), notes = draft.notes.trim(), createdAt = now, updatedAt = now)
+            val id = dao.insert(item)
+            ExpiryReminderWorker.schedule(appContext, item.copy(id = id), reminderDays.first())
+        }
     }
-    fun update(item: FoodItem, name: String, category: String, quantity: Double, unit: String, date: LocalDate, location: String, price: Double?, brand: String, barcode: String) {
-        viewModelScope.launch { val updated = item.copy(name = name.trim(), category = category, quantity = quantity, unit = unit, expiresAt = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(), location = location, price = price, brand = brand.trim(), barcode = barcode.trim()); dao.update(updated); ExpiryReminderWorker.schedule(appContext, updated, reminderDays.first()) }
+    fun update(item: FoodItem, draft: FoodDraft) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val updated = item.copy(name = draft.name.trim(), category = draft.category, quantity = draft.quantity, unit = draft.unit, expiresAt = draft.expiresOn.toStoredMillis(), location = draft.location, price = draft.price, brand = draft.brand.trim(), barcode = draft.barcode.trim(), purchasedAt = draft.purchasedOn?.toStoredMillis(), openedAt = draft.openedOn?.toStoredMillis(), notes = draft.notes.trim(), updatedAt = now)
+            dao.update(updated)
+            ExpiryReminderWorker.schedule(appContext, updated, reminderDays.first())
+        }
     }
     fun consume(item: FoodItem) { viewModelScope.launch { dao.consume(item.id, System.currentTimeMillis()); ExpiryReminderWorker.cancel(appContext, item.id) } }
     fun delete(item: FoodItem) { viewModelScope.launch { dao.delete(item); ExpiryReminderWorker.cancel(appContext, item.id) } }
+    fun discard(item: FoodItem, reason: String) { viewModelScope.launch { dao.discard(item.id, System.currentTimeMillis(), reason); ExpiryReminderWorker.cancel(appContext, item.id) } }
     fun addShopping(name: String) { viewModelScope.launch { if (name.isNotBlank()) dao.addToShopping(ShoppingEntry(name = name.trim())) } }
     fun checkShopping(entry: ShoppingEntry, checked: Boolean) { viewModelScope.launch { dao.checkShoppingItem(entry.id, checked) } }
     fun removeShopping(entry: ShoppingEntry) { viewModelScope.launch { dao.removeShoppingItem(entry.id) } }
@@ -181,7 +209,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             val previous = dao.all().first()
             previous.forEach { ExpiryReminderWorker.cancel(appContext, it.id) }
             dao.replaceBackup(backup.foodItems, backup.shoppingItems)
-            ExpiryReminderWorker.rescheduleAll(appContext, backup.foodItems.filter { it.consumedAt == null }, reminderDays.first())
+            ExpiryReminderWorker.rescheduleAll(appContext, backup.foodItems.filter { it.consumedAt == null && it.discardedAt == null }, reminderDays.first())
         }.onSuccess { _transferMessage.value = "Backup restored." }.onFailure { _transferMessage.value = "Restore failed: ${it.message ?: "unknown error"}" }
         _pendingBackup.value = null
     }
@@ -258,8 +286,8 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         }
         LaunchedEffect(productPrefill) { if (productPrefill != null) adding = true }
         if (lookupLoading) AlertDialog(onDismissRequest = { }, title = { Text("Looking up product") }, text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(modifier = Modifier.size(22.dp)); Spacer(Modifier.width(12.dp)); Text("Expiration date will still need to be entered.") } }, confirmButton = {})
-        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null)) FoodEditor(editItem, initialName = productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = productPrefill?.category ?: "Other", onDismiss = { adding = false; editItem = null; vm.clearProductPrefill() }, onSave = { old, n, c, q, u, d, l, p, brand, barcode ->
-            if (old == null) vm.add(n, c, q, u, d, l, p, brand, barcode) else vm.update(old, n, c, q, u, d, l, p, brand, barcode)
+        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null)) FoodEditor(editItem, initialName = productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = productPrefill?.category ?: "Other", onDismiss = { adding = false; editItem = null; vm.clearProductPrefill() }, onSave = { old, draft ->
+            if (old == null) vm.add(draft) else vm.update(old, draft)
             vm.clearProductPrefill()
             if (old == null && !notificationPromptSeen) {
                 val alreadyAllowed = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -268,8 +296,8 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             adding = false; editItem = null
         }, onDelete = { editItem?.let(vm::delete); editItem = null; vm.clearProductPrefill() })
         val receiptCandidate = pendingReceipt?.getOrNull(receiptIndex)
-        if (onboardingComplete && receiptCandidate != null) FoodEditor(null, initialName = receiptCandidate.name, initialQuantity = receiptCandidate.quantity, initialPrice = receiptCandidate.price, onDismiss = { pendingReceipt = null; receiptIndex = 0 }, onSave = { _, name, category, quantity, unit, date, location, price, brand, barcode ->
-            vm.add(name, category, quantity, unit, date, location, price, brand, barcode)
+        if (onboardingComplete && receiptCandidate != null) FoodEditor(null, initialName = receiptCandidate.name, initialQuantity = receiptCandidate.quantity, initialPrice = receiptCandidate.price, onDismiss = { pendingReceipt = null; receiptIndex = 0 }, onSave = { _, draft ->
+            vm.add(draft)
             if (receiptIndex == pendingReceipt.orEmpty().lastIndex && !notificationPromptSeen) {
                 val alreadyAllowed = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
                 if (!alreadyAllowed) showNotificationInfo = true else vm.markNotificationPromptSeen()
@@ -347,7 +375,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Soonest", "A to Z", "Recently added").forEach { FilterChip(sort == it, { sort = it }, label = { Text(it) }) } }
         } }
         item { Row(verticalAlignment = Alignment.CenterVertically) { Text(if (inventory) "All items" else "Use these first", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); if (soon.isNotEmpty() && !inventory) Text("${soon.size} soon", color = Forest, fontWeight = FontWeight.SemiBold) } }
-        if (visible.isEmpty()) item { if (items.isEmpty()) EmptyCard() else Text("No food matches these filters yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) } else this.items(visible, key = { it.id }) { food -> FoodCard(food, today, onConsume = { vm.consume(food) }, onClick = { onEdit(food) }) }
+        if (visible.isEmpty()) item { if (items.isEmpty()) EmptyCard() else Text("No food matches these filters yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) } else this.items(visible, key = { it.id }) { food -> FoodCard(food, today, onConsume = { vm.consume(food) }, onDiscard = { reason -> vm.discard(food, reason) }, onClick = { onEdit(food) }) }
     }
 }
 
@@ -355,13 +383,23 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
 
 @Composable private fun MetricCard(title: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier) { Card(modifier, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)); Text(value, fontSize = 23.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text(title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
 
-@Composable private fun FoodCard(item: FoodItem, today: LocalDate, onConsume: () -> Unit, onClick: () -> Unit) {
+@Composable private fun FoodCard(item: FoodItem, today: LocalDate, onConsume: () -> Unit, onDiscard: (String) -> Unit, onClick: () -> Unit) {
+    var showDiscardDialog by remember(item.id) { mutableStateOf(false) }
+    var discardReason by remember(item.id) { mutableStateOf("Expired") }
     val left = days(item, today); val statusColor = when { left < 0 -> Color(0xFF9C3D38); left == 0 -> Color(0xFFD85D35); left <= 2 -> Color(0xFFE19531); left <= 7 -> Color(0xFFB68C24); else -> Forest }
     Card(onClick = onClick, shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(54.dp).background(Mint.copy(alpha = .55f), RoundedCornerShape(17.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Eco, null, tint = Forest) }; Spacer(Modifier.width(13.dp))
-        Column(Modifier.weight(1f)) { Text(item.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface); Text(listOf(item.brand, item.location, quantityText(item), item.category).filter(String::isNotBlank).joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp); Text(when { left < 0 -> "Expired ${-left}d ago"; left == 0 -> "Expires today"; left == 1 -> "Expires tomorrow"; else -> "$left days left" }, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+        Column(Modifier.weight(1f)) { Text(item.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface); Text(listOf(item.brand, item.location, quantityText(item), item.category).filter(String::isNotBlank).joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp); Text(when { left < 0 -> "Expired ${-left}d ago"; left == 0 -> "Expires today"; left == 1 -> "Expires tomorrow"; else -> "$left days left" }, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold); if (item.openedAt != null) Text("Opened ${Instant.ofEpochMilli(item.openedAt).atZone(ZoneId.systemDefault()).toLocalDate().format(DateTimeFormatter.ofPattern("d MMM"))}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
         IconButton(onClick = onConsume) { Icon(Icons.Rounded.CheckCircle, "Mark consumed", tint = Forest) }
+        IconButton(onClick = { showDiscardDialog = true }) { Icon(Icons.Rounded.Delete, "Mark discarded", tint = MaterialTheme.colorScheme.error) }
     } }
+    if (showDiscardDialog) AlertDialog(
+        onDismissRequest = { showDiscardDialog = false },
+        title = { Text("Discard ${item.name}?") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Choose a reason to improve your waste summaries."); listOf("Expired", "Spoiled", "Unwanted", "Other").forEach { reason -> FilterChip(selected = discardReason == reason, onClick = { discardReason = reason }, label = { Text(reason) }) } } },
+        confirmButton = { TextButton(onClick = { showDiscardDialog = false; onDiscard(discardReason) }) { Text("Mark discarded") } },
+        dismissButton = { TextButton(onClick = { showDiscardDialog = false }) { Text("Cancel") } }
+    )
 }
 
 @Composable private fun EmptyCard() { Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F2EA))) { Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.Spa, null, tint = Forest, modifier = Modifier.size(36.dp)); Spacer(Modifier.height(10.dp)); Text("Your kitchen is waiting", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Forest); Text("Add your first food item to keep an eye on freshness.", color = Color(0xFF52645A)) } } }
@@ -446,7 +484,10 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
     val periodStartMillis = periodStart.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
     val addedInPeriod = history.count { it.createdAt >= periodStartMillis }
     val consumedInPeriod = history.filter { (it.consumedAt ?: Long.MIN_VALUE) >= periodStartMillis }.sortedByDescending { it.consumedAt }
+    val discardedInPeriod = history.filter { (it.discardedAt ?: Long.MIN_VALUE) >= periodStartMillis }
     val estimatedValue = consumedInPeriod.mapNotNull { it.price }.sum()
+    val estimatedWaste = discardedInPeriod.mapNotNull { it.price }.sum()
+    val commonDiscardReason = discardedInPeriod.groupingBy { it.discardReason ?: "Other" }.eachCount().maxByOrNull { it.value }?.key
     val week = (6 downTo 0).map { today.minusDays(it.toLong()) }
     val weeklyConsumed = week.map { day -> consumed.count { item -> Instant.ofEpochMilli(item.consumedAt!!).atZone(ZoneId.systemDefault()).toLocalDate() == day } }
     val maxDaily = weeklyConsumed.maxOrNull()?.coerceAtLeast(1) ?: 1
@@ -456,6 +497,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
         item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Week", "Month", "Year").forEach { option -> FilterChip(selected = period == option, onClick = { period = option }, label = { Text(option) }) } } }
         item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { MetricCard("Added", addedInPeriod.toString(), Icons.Rounded.Add, Modifier.weight(1f)); MetricCard("Consumed", consumedInPeriod.size.toString(), Icons.Rounded.Favorite, Modifier.weight(1f)); MetricCard("Expired now", expiredNow.toString(), Icons.Rounded.WarningAmber, Modifier.weight(1f)) } }
         item { Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text("Estimated value enjoyed", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text(if (consumedInPeriod.any { it.price != null }) "${"%.2f".format(estimatedValue)} in tracked items" else "Add prices to items to estimate value here.", color = MaterialTheme.colorScheme.primary, fontSize = 21.sp, fontWeight = FontWeight.Bold); Text("Estimate from prices you entered for items marked consumed during this period. It is not exact savings.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) } } }
+        item { Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Recorded waste", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text("${discardedInPeriod.size} items marked discarded${commonDiscardReason?.let { " · most often: $it" }.orEmpty()}", color = MaterialTheme.colorScheme.onSurfaceVariant); if (discardedInPeriod.any { it.price != null }) Text("Entered prices total ${"%.2f".format(estimatedWaste)}; this is an estimate.", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) else Text("Add prices to discarded items to estimate their value.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) } } }
         item { Text("Weekly consumption", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
         item { Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { week.forEachIndexed { index, day -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { Text(day.format(DateTimeFormatter.ofPattern("EEE")), modifier = Modifier.width(40.dp), color = MaterialTheme.colorScheme.onSurfaceVariant); LinearProgressIndicator(progress = { weeklyConsumed[index].toFloat() / maxDaily }, modifier = Modifier.weight(1f), color = Forest, trackColor = Mint); Text(weeklyConsumed[index].toString(), modifier = Modifier.width(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } }
         item { Text("Recently consumed · $period", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
@@ -529,10 +571,34 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun FoodEditor(item: FoodItem?, initialName: String = "", initialBrand: String = "", initialBarcode: String = "", initialCategory: String = "Other", initialQuantity: Double = 1.0, initialPrice: Double? = null, onDismiss: () -> Unit, onSave: (FoodItem?, String, String, Double, String, LocalDate, String, Double?, String, String) -> Unit, onDelete: () -> Unit) {
+@Composable private fun OptionalDateField(label: String, value: LocalDate?, onChange: (LocalDate?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(onClick = { open = true }, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Rounded.CalendarMonth, null)
+            Spacer(Modifier.width(8.dp))
+            Text(value?.format(DateTimeFormatter.ofPattern("d MMM yyyy")) ?: label)
+        }
+        if (value != null) TextButton(onClick = { onChange(null) }) { Text("Clear") }
+    }
+    if (open) {
+        val picker = rememberDatePickerState(initialSelectedDateMillis = value?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli())
+        DatePickerDialog(
+            onDismissRequest = { open = false },
+            confirmButton = { TextButton(onClick = { picker.selectedDateMillis?.let { onChange(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()) }; open = false }) { Text("Select") } },
+            dismissButton = { TextButton(onClick = { open = false }) { Text("Cancel") } }
+        ) { DatePicker(state = picker) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun FoodEditor(item: FoodItem?, initialName: String = "", initialBrand: String = "", initialBarcode: String = "", initialCategory: String = "Other", initialQuantity: Double = 1.0, initialPrice: Double? = null, onDismiss: () -> Unit, onSave: (FoodItem?, FoodDraft) -> Unit, onDelete: () -> Unit) {
     val editorKey = item?.id?.toString() ?: "$initialBarcode:$initialName"
     var name by remember(editorKey) { mutableStateOf(item?.name ?: initialName) }; var brand by remember(editorKey) { mutableStateOf(item?.brand ?: initialBrand) }; var barcode by remember(editorKey) { mutableStateOf(item?.barcode ?: initialBarcode) }; var category by remember(editorKey) { mutableStateOf(item?.category ?: initialCategory) }; var quantity by remember(editorKey) { mutableStateOf(item?.quantity?.toString() ?: initialQuantity.toString()) }; var unit by remember(editorKey) { mutableStateOf(item?.unit ?: "pcs") }
     var date by remember(editorKey) { mutableStateOf(item?.let { Instant.ofEpochMilli(it.expiresAt).atZone(ZoneId.systemDefault()).toLocalDate() } ?: LocalDate.now().plusDays(7)) }; var dateConfirmed by remember(editorKey) { mutableStateOf(item != null) }; var location by remember(editorKey) { mutableStateOf(item?.location ?: "Fridge") }; var price by remember(editorKey) { mutableStateOf(item?.price?.toString() ?: initialPrice?.toString().orEmpty()) }; var dateOpen by remember(editorKey) { mutableStateOf(false) }
+    var purchasedOn by remember(editorKey) { mutableStateOf(item?.purchasedAt?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }) }
+    var openedOn by remember(editorKey) { mutableStateOf(item?.openedAt?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toLocalDate() }) }
+    var notes by remember(editorKey) { mutableStateOf(item?.notes.orEmpty()) }
     AlertDialog(onDismissRequest = onDismiss, title = { Text(if (item == null) "Add to your kitchen" else "Edit food", fontWeight = FontWeight.Bold) }, text = {
         Column(Modifier.heightIn(max = 500.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(name, { name = it }, label = { Text("Food name") }, singleLine = true)
@@ -540,15 +606,18 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
             OutlinedTextField(barcode, { barcode = it.filter { ch -> ch in '0'..'9' }.take(14) }, label = { Text("Barcode") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             Text("Category", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("Fruits", "Vegetables", "Dairy", "Meat", "Fish & seafood", "Bakery", "Beverages", "Frozen food", "Canned food", "Snacks", "Condiments", "Grains & pasta", "Other").forEach { FilterChip(category == it, { category = it }, label = { Text(it) }) } }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(quantity, { quantity = it }, modifier = Modifier.weight(1f), label = { Text("Quantity") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true); OutlinedTextField(unit, { unit = it }, modifier = Modifier.weight(1f), label = { Text("Unit") }, singleLine = true) }
+            OptionalDateField("Purchase date", purchasedOn, { purchasedOn = it })
+            OptionalDateField("Date opened", openedOn, { openedOn = it })
             OutlinedButton(onClick = { dateOpen = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.CalendarMonth, null); Spacer(Modifier.width(8.dp)); Text(if (dateConfirmed) "Expires ${date.format(DateTimeFormatter.ofPattern("d MMM yyyy"))}" else "Choose expiration date") }
             Text("Storage", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { listOf("Fridge", "Freezer", "Pantry").forEach { FilterChip(location == it, { location = it }, label = { Text(it) }) } }
             OutlinedTextField(price, { price = it }, label = { Text("Price (optional)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+            OutlinedTextField(notes, { notes = it.take(500) }, label = { Text("Notes (optional)") }, minLines = 2, maxLines = 4)
         }
     }, confirmButton = { TextButton(onClick = {
         val q = quantity.toDoubleOrNull() ?: 0.0
         val parsedPrice = price.toDoubleOrNull()
         if (name.isNotBlank() && q.isFinite() && q > 0 && dateConfirmed && (price.isBlank() || parsedPrice != null && parsedPrice.isFinite() && parsedPrice >= 0)) {
-            onSave(item, name, category, q, unit.ifBlank { "pcs" }, date, location, parsedPrice, brand, barcode)
+            onSave(item, FoodDraft(name, category, q, unit.ifBlank { "pcs" }, date, location, parsedPrice, brand, barcode, purchasedOn, openedOn, notes))
         }
     }, enabled = name.isNotBlank() && (quantity.toDoubleOrNull()?.let { it.isFinite() && it > 0 } == true) && dateConfirmed && (price.isBlank() || price.toDoubleOrNull()?.let { it.isFinite() && it >= 0 } == true)) { Text("Save") } }, dismissButton = { Row { if (item != null) TextButton(onClick = onDelete) { Text("Delete", color = Color(0xFF9C3D38)) }; TextButton(onClick = onDismiss) { Text("Cancel") } } })
     if (dateOpen) {
