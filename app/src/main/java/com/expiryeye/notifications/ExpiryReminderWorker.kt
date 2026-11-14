@@ -86,7 +86,10 @@ class ExpiryReminderWorker(context: Context, params: WorkerParameters) : Corouti
         }
 
         fun cancel(context: Context, itemId: Long) {
-            reminderOptions.forEach { WorkManager.getInstance(context).cancelUniqueWork("expiry-$itemId-$it") }
+            reminderOptions.forEach { days ->
+                WorkManager.getInstance(context).cancelUniqueWork("expiry-$itemId-$days")
+                NotificationManagerCompat.from(context).cancel("expiry-$itemId-$days", itemId.toInt() + days)
+            }
         }
 
         fun rescheduleAll(context: Context, items: List<FoodItem>, offsets: List<Int> = defaultReminderOffsets) {
