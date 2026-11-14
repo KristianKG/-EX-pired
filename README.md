@@ -4,7 +4,7 @@ ExpiryEye is an offline-first Android food inventory and expiration tracker. No 
 
 ## Build
 
-Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync Gradle. Build with `gradle :app:assembleDebug` where Gradle is installed. This workspace currently has no Android SDK or Gradle executable, so compilation has not been verified here.
+Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync Gradle. The checked-in Gradle Wrapper pins Gradle 8.9, so build without a separate Gradle installation using `gradlew.bat :app:assembleDebug` on Windows or `./gradlew :app:assembleDebug` on macOS/Linux. Set `ANDROID_HOME` or `sdk.dir` in the untracked `local.properties` file to the Android SDK location.
 
 ## Implemented
 
