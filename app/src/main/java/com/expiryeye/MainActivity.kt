@@ -39,6 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expiryeye.data.*
 import com.expiryeye.notifications.ExpiryReminderWorker
 import com.expiryeye.notifications.DailyExpiryCheckWorker
+import com.expiryeye.notifications.DailySummaryWorker
 import com.expiryeye.domain.daysUntilExpiry
 import com.expiryeye.domain.defaultReminderOffsets
 import com.expiryeye.domain.consumeQuantity
@@ -109,6 +110,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     private val reminderDaysKey = stringSetPreferencesKey("reminder_days")
     private val recipeFavoritesKey = stringSetPreferencesKey("favorite_recipes")
     private val customLocationsKey = stringSetPreferencesKey("custom_storage_locations")
+    private val dailySummaryKey = booleanPreferencesKey("daily_summary_enabled")
     private val onboardingKey = booleanPreferencesKey("onboarding_complete")
     private val displayNameKey = stringPreferencesKey("display_name")
     val darkTheme = appContext.settingsStore.data.map { it[darkKey] ?: false }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
@@ -122,6 +124,8 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         }.distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
         defaultStorageLocations + custom
     }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultStorageLocations)
+    val dailySummaryEnabled = appContext.settingsStore.data.map { it[dailySummaryKey] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val reminderDays = appContext.settingsStore.data.map { prefs ->
         (prefs[reminderDaysKey]?.mapNotNull(String::toIntOrNull) ?: defaultReminderOffsets).filter { it in listOf(14, 7, 3, 1, 0) }.distinct().sortedDescending()
     }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultReminderOffsets)
@@ -134,6 +138,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     private val _lookupLoading = MutableStateFlow(false)
     val lookupLoading = _lookupLoading.asStateFlow()
     fun setDarkTheme(enabled: Boolean) { viewModelScope.launch { appContext.settingsStore.edit { it[darkKey] = enabled } } }
+    fun setDailySummaryEnabled(enabled: Boolean) { viewModelScope.launch { appContext.settingsStore.edit { it[dailySummaryKey] = enabled } } }
     fun markNotificationPromptSeen() { viewModelScope.launch { appContext.settingsStore.edit { it[notificationPromptKey] = true } } }
     fun completeOnboarding() { viewModelScope.launch { appContext.settingsStore.edit { it[onboardingKey] = true } } }
     fun setDisplayName(name: String) { viewModelScope.launch { appContext.settingsStore.edit { it[displayNameKey] = name.trim().take(40) } } }
@@ -173,6 +178,9 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     init { viewModelScope.launch { reminderDays.collect { offsets ->
         ExpiryReminderWorker.rescheduleAll(appContext, dao.activeNow(), offsets)
         DailyExpiryCheckWorker.schedule(appContext, offsets)
+    } } }
+    init { viewModelScope.launch { dailySummaryEnabled.collect { enabled ->
+        if (enabled) DailySummaryWorker.schedule(appContext) else DailySummaryWorker.cancel(appContext)
     } } }
     fun add(draft: FoodDraft) {
         viewModelScope.launch {
@@ -264,6 +272,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     val displayName by vm.displayName.collectAsState()
     val recipeFavorites by vm.recipeFavorites.collectAsState()
     val storageLocations by vm.storageLocations.collectAsState()
+    val dailySummaryEnabled by vm.dailySummaryEnabled.collectAsState()
     val productPrefill by vm.productPrefill.collectAsState()
     val lookupLoading by vm.lookupLoading.collectAsState()
     val notificationPromptSeen by vm.notificationPromptSeen.collectAsState()
@@ -308,7 +317,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
                     showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onBack = { showShopping = false })
                     showReceiptScanner -> ReceiptScannerScreen(onClose = { showReceiptScanner = false }, onConfirm = { receipt -> pendingReceipt = receipt; receiptIndex = 0; showReceiptScanner = false })
                     else -> SettingsScreen(
-                    padding, darkTheme, vm::setDarkTheme, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, vm::setReminderEnabled,
+                    padding, darkTheme, vm::setDarkTheme, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, dailySummaryEnabled, vm::setDailySummaryEnabled, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, vm::setReminderEnabled,
                     onNotificationSettings = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) },
                     onShopping = { showShopping = true },
                     onScanReceipt = { showReceiptScanner = true },
@@ -592,7 +601,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
     }
 }
 
-@Composable private fun SettingsScreen(padding: PaddingValues, darkTheme: Boolean, onDarkTheme: (Boolean) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, storageLocations: List<String>, onAddStorageLocation: (String) -> Unit, onRemoveStorageLocation: (String) -> Unit, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
+@Composable private fun SettingsScreen(padding: PaddingValues, darkTheme: Boolean, onDarkTheme: (Boolean) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, dailySummaryEnabled: Boolean, onDailySummaryEnabled: (Boolean) -> Unit, storageLocations: List<String>, onAddStorageLocation: (String) -> Unit, onRemoveStorageLocation: (String) -> Unit, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
     var name by remember(displayName) { mutableStateOf(displayName) }
     var newStorageLocation by remember { mutableStateOf("") }
     val customStorageLocations = storageLocations.filterNot { location -> defaultStorageLocations.any { it.equals(location, ignoreCase = true) } }
@@ -611,6 +620,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
             else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { customStorageLocations.forEach { location -> AssistChip(onClick = { onRemoveStorageLocation(location) }, label = { Text(location) }, leadingIcon = { Icon(Icons.Rounded.Close, contentDescription = "Remove $location") }) } }
         } } }
         item { Text("Expiration reminders", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+        item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Daily kitchen summary", fontWeight = FontWeight.SemiBold); Text("Morning alert for expired or soon-to-expire food; needs notification permission", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }; Switch(dailySummaryEnabled, onDailySummaryEnabled) } } }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Remind me", fontWeight = FontWeight.SemiBold)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) { listOf(14, 7, 3, 1, 0).forEach { days ->
