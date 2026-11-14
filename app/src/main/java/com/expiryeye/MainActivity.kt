@@ -242,7 +242,10 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     } }
     fun delete(item: FoodItem) { viewModelScope.launch { dao.delete(item); ExpiryReminderWorker.cancel(appContext, item.id) } }
     fun discard(item: FoodItem, reason: String) { viewModelScope.launch { dao.discard(item.id, System.currentTimeMillis(), reason); ExpiryReminderWorker.cancel(appContext, item.id) } }
-    fun addShopping(name: String) { viewModelScope.launch { if (name.isNotBlank()) dao.addToShopping(ShoppingEntry(name = name.trim())) } }
+    fun addShopping(name: String) = addShopping(name, "1", "Other")
+    fun addShopping(name: String, quantity: String, category: String) { viewModelScope.launch {
+        if (name.isNotBlank()) dao.addToShopping(ShoppingEntry(name = name.trim(), quantity = quantity.trim().ifBlank { "1" }.take(24), category = category.trim().ifBlank { "Other" }.take(32)))
+    } }
     fun checkShopping(entry: ShoppingEntry, checked: Boolean) { viewModelScope.launch { dao.checkShoppingItem(entry.id, checked) } }
     fun removeShopping(entry: ShoppingEntry) { viewModelScope.launch { dao.removeShoppingItem(entry.id) } }
     fun exportJson(uri: Uri) = viewModelScope.launch {
@@ -346,7 +349,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
                 2 -> RecipesScreen(items, padding, recipeFavorites, vm::toggleRecipeFavorite, vm::addShopping)
                 3 -> StatisticsScreen(items, history, padding)
                 else -> when {
-                    showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onMoveToInventory = { pendingShoppingEntry = it }, onBack = { showShopping = false })
+                    showShopping -> ShoppingScreen(shopping, padding, foodCategories, vm::addShopping, vm::checkShopping, vm::removeShopping, onMoveToInventory = { pendingShoppingEntry = it }, onBack = { showShopping = false })
                     showReceiptScanner -> ReceiptScannerScreen(onClose = { showReceiptScanner = false }, onConfirm = { receipt -> pendingReceipt = receipt; receiptIndex = 0; showReceiptScanner = false })
                     else -> SettingsScreen(
                     padding, themeMode, vm::setThemeMode, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, dailySummaryEnabled, vm::setDailySummaryEnabled, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, foodCategories, vm::addFoodCategory, vm::removeFoodCategory, vm::setReminderEnabled,
@@ -632,19 +635,26 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
 }
 
 @Composable private fun ShoppingScreen(
-    entries: List<ShoppingEntry>, padding: PaddingValues,
-    onAdd: (String) -> Unit, onCheck: (ShoppingEntry, Boolean) -> Unit,
+    entries: List<ShoppingEntry>, padding: PaddingValues, foodCategories: List<String>,
+    onAdd: (String, String, String) -> Unit, onCheck: (ShoppingEntry, Boolean) -> Unit,
     onRemove: (ShoppingEntry) -> Unit, onMoveToInventory: (ShoppingEntry) -> Unit, onBack: () -> Unit
 ) {
     var name by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("1") }
+    var category by remember { mutableStateOf("Other") }
+    val groupedEntries = entries.groupBy { it.category.ifBlank { "Other" } }.toSortedMap()
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 24.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { TextButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, null); Text("Settings") }; Text("SHOP SMARTER", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp); Text("Shopping list", fontSize = 30.sp, fontWeight = FontWeight.Bold) }
         item { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(name, { name = it }, modifier = Modifier.weight(1f), label = { Text("Add an item") }, singleLine = true, shape = RoundedCornerShape(16.dp))
-            FilledIconButton(onClick = { if (name.isNotBlank()) { onAdd(name); name = "" } }, enabled = name.isNotBlank()) { Icon(Icons.Rounded.Add, "Add") }
+            OutlinedTextField(quantity, { quantity = it.take(24) }, modifier = Modifier.width(76.dp), label = { Text("Qty") }, singleLine = true)
+            FilledIconButton(onClick = { if (name.isNotBlank()) { onAdd(name, quantity, category); name = ""; quantity = "1" } }, enabled = name.isNotBlank()) { Icon(Icons.Rounded.Add, "Add") }
         } }
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { foodCategories.forEach { option -> FilterChip(selected = category == option, onClick = { category = option }, label = { Text(option) }) } } }
         if (entries.isEmpty()) item { Text("Your shopping list is clear. Add items here or send missing recipe ingredients to this list.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 20.dp)) }
-        else this.items(entries, key = { it.id }) { entry ->
+        else groupedEntries.forEach { (group, groupEntries) ->
+            item(key = "shopping-category-$group") { Text(group, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp)) }
+            this.items(groupEntries, key = { it.id }) { entry ->
             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = entry.checked, onCheckedChange = { onCheck(entry, it) })
@@ -653,6 +663,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
                     IconButton(onClick = { onRemove(entry) }) { Icon(Icons.Rounded.Close, "Remove") }
                 }
             }
+        }
         }
     }
 }
