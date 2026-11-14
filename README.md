@@ -15,7 +15,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 - Configurable local reminder intervals at 14, 7, 3, 1, and 0 days.
 - Optional daily morning summary notification for expired items and food expiring within three days. It only notifies when an item needs attention and follows Android notification permission and background scheduling rules.
 - Reminder taps open the corresponding food item, and a daily WorkManager check refreshes future reminders against the current local date and selected reminder intervals.
-- Offline recipe suggestions with ingredient-match counts and missing ingredients.
+- Offline recipe suggestions with ingredient-match counts, missing ingredients, preparation time, difficulty, and servings.
 - Persistent recipe favorites and filters for meal type, quick meals, vegetarian, high-protein, low-cost, and use-soon recipes. Matching dishes are ranked higher when they use inventory nearing its entered date.
 - Persistent shopping list, including adding missing recipe ingredients, purchased quantity/category display, and a confirmed add-to-inventory editor flow.
 - Week, month, and year impact summaries, weekly consumption and waste charts, and estimated value for items marked consumed when a price was entered. Discarded items are summarized by category, reason, and selected period.
@@ -30,7 +30,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 
 ## Still outstanding
 
-The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes richer recipe content (images, servings, difficulty), broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. Users can add custom storage locations in Settings and select them when editing products. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
+The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes recipe imagery and expanded recipe variety, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. Users can add custom storage locations and categories in Settings. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
 
 ## Build verification
 

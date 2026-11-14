@@ -522,7 +522,9 @@ private data class Recipe(
     val steps: String,
     val vegetarian: Boolean = true,
     val highProtein: Boolean = false,
-    val lowCost: Boolean = true
+    val lowCost: Boolean = true,
+    val servings: Int = 2,
+    val difficulty: String = when { time <= 15 -> "Easy"; time <= 30 -> "Medium"; else -> "Advanced" }
 )
 private val recipes = listOf(
     Recipe("Garden omelette", setOf("egg", "tomato", "spinach", "cheese"), 15, "Breakfast", "Whisk eggs, fold in chopped vegetables and cheese, then cook gently until set.", highProtein = true),
@@ -568,7 +570,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
         else this.items(visibleRecipes, key = { it.name }) { recipe ->
             val matched = matchedIngredients(recipe, items); val missing = recipe.ingredients - matched
             Card(onClick = { selected = recipe }, shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(recipe.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text("${recipe.category} · ${recipe.time} min", color = MaterialTheme.colorScheme.onSurfaceVariant) }; Text("${matched.size}/${recipe.ingredients.size}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold); IconButton(onClick = { onToggleFavorite(recipe.name) }) { Icon(Icons.Rounded.Favorite, contentDescription = if (recipe.name in favorites) "Remove from favorites" else "Add to favorites", tint = if (recipe.name in favorites) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
+                Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(recipe.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text("${recipe.category} · ${recipe.time} min · ${recipe.difficulty} · ${recipe.servings} servings", color = MaterialTheme.colorScheme.onSurfaceVariant) }; Text("${matched.size}/${recipe.ingredients.size}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold); IconButton(onClick = { onToggleFavorite(recipe.name) }) { Icon(Icons.Rounded.Favorite, contentDescription = if (recipe.name in favorites) "Remove from favorites" else "Add to favorites", tint = if (recipe.name in favorites) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
                 LinearProgressIndicator(progress = { matched.size.toFloat() / recipe.ingredients.size }, modifier = Modifier.fillMaxWidth(), color = Forest, trackColor = Mint)
                 Text(if (missing.isEmpty()) "You have everything" else "Need: ${missing.joinToString()}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
             } }
@@ -580,7 +582,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
         AlertDialog(
             onDismissRequest = { selected = null },
             title = { Row(verticalAlignment = Alignment.CenterVertically) { Text(recipe.name, modifier = Modifier.weight(1f)); IconButton(onClick = { onToggleFavorite(recipe.name) }) { Icon(Icons.Rounded.Favorite, contentDescription = if (recipe.name in favorites) "Remove from favorites" else "Add to favorites", tint = if (recipe.name in favorites) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } },
-            text = { Text("${matched.size} of ${recipe.ingredients.size} ingredients available · ${recipe.time} minutes\n${recipe.ingredients.joinToString()}\n\n${recipe.steps}") },
+            text = { Text("${matched.size} of ${recipe.ingredients.size} ingredients available · ${recipe.time} minutes · ${recipe.difficulty} · serves ${recipe.servings}\n\n${recipe.ingredients.joinToString()}\n\n${recipe.steps}") },
             confirmButton = { TextButton(onClick = { missing.forEach(onAddShopping); selected = null }) { Text(if (missing.isEmpty()) "Done" else "Add missing to list") } }
         )
     }
