@@ -60,6 +60,7 @@ private val Forest = Color(0xFF174C3A)
 private val Mint = Color(0xFFBFE8D2)
 private val Canvas = Color(0xFFF7F8F3)
 private val defaultStorageLocations = listOf("Fridge", "Freezer", "Pantry")
+private val defaultFoodCategories = listOf("Fruits", "Vegetables", "Dairy", "Meat", "Fish & seafood", "Bakery", "Beverages", "Frozen food", "Canned food", "Snacks", "Condiments", "Grains & pasta", "Other")
 private val Context.settingsStore by preferencesDataStore(name = "expiryeye_settings")
 
 data class FoodDraft(
@@ -112,6 +113,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     private val reminderDaysKey = stringSetPreferencesKey("reminder_days")
     private val recipeFavoritesKey = stringSetPreferencesKey("favorite_recipes")
     private val customLocationsKey = stringSetPreferencesKey("custom_storage_locations")
+    private val customCategoriesKey = stringSetPreferencesKey("custom_food_categories")
     private val dailySummaryKey = booleanPreferencesKey("daily_summary_enabled")
     private val onboardingKey = booleanPreferencesKey("onboarding_complete")
     private val displayNameKey = stringPreferencesKey("display_name")
@@ -128,6 +130,12 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         }.distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
         defaultStorageLocations + custom
     }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultStorageLocations)
+    val foodCategories = appContext.settingsStore.data.map { prefs ->
+        val custom = prefs[customCategoriesKey].orEmpty().filter { category ->
+            category.isNotBlank() && defaultFoodCategories.none { it.equals(category, ignoreCase = true) }
+        }.distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
+        defaultFoodCategories + custom
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultFoodCategories)
     val dailySummaryEnabled = appContext.settingsStore.data.map { it[dailySummaryKey] ?: false }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val reminderDays = appContext.settingsStore.data.map { prefs ->
@@ -167,6 +175,21 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         if (defaultStorageLocations.any { it.equals(name, ignoreCase = true) }) return
         viewModelScope.launch { appContext.settingsStore.edit { prefs ->
             prefs[customLocationsKey] = prefs[customLocationsKey].orEmpty().filterNot { it.equals(name, ignoreCase = true) }.toSet()
+        } }
+    }
+    fun addFoodCategory(value: String) {
+        val name = value.trim().take(32)
+        if (name.isBlank() || defaultFoodCategories.any { it.equals(name, ignoreCase = true) }) return
+        viewModelScope.launch { appContext.settingsStore.edit { prefs ->
+            val categories = prefs[customCategoriesKey]?.toMutableSet() ?: mutableSetOf()
+            if (categories.none { it.equals(name, ignoreCase = true) }) categories.add(name)
+            prefs[customCategoriesKey] = categories
+        } }
+    }
+    fun removeFoodCategory(name: String) {
+        if (defaultFoodCategories.any { it.equals(name, ignoreCase = true) }) return
+        viewModelScope.launch { appContext.settingsStore.edit { prefs ->
+            prefs[customCategoriesKey] = prefs[customCategoriesKey].orEmpty().filterNot { it.equals(name, ignoreCase = true) }.toSet()
         } }
     }
     fun setReminderEnabled(days: Int, enabled: Boolean) { viewModelScope.launch { appContext.settingsStore.edit { prefs ->
@@ -279,6 +302,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     val displayName by vm.displayName.collectAsState()
     val recipeFavorites by vm.recipeFavorites.collectAsState()
     val storageLocations by vm.storageLocations.collectAsState()
+    val foodCategories by vm.foodCategories.collectAsState()
     val dailySummaryEnabled by vm.dailySummaryEnabled.collectAsState()
     val productPrefill by vm.productPrefill.collectAsState()
     val lookupLoading by vm.lookupLoading.collectAsState()
@@ -316,16 +340,16 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             if (!onboardingComplete) OnboardingScreen(Modifier.padding(padding)) { addFirst ->
                 vm.completeOnboarding(); if (addFirst) adding = true
             } else when (tab) {
-                0 -> HomeScreen(items, vm, padding, false, storageLocations, displayName = displayName, onEdit = { editItem = it })
+                0 -> HomeScreen(items, vm, padding, false, storageLocations, foodCategories, displayName = displayName, onEdit = { editItem = it })
                 1 -> if (showScanner) BarcodeScannerScreen(onClose = { showScanner = false }, onBarcode = { showScanner = false; vm.lookupBarcode(it) })
-                    else HomeScreen(items, vm, padding, true, storageLocations, displayName = displayName, onEdit = { editItem = it }, onScan = { showScanner = true })
+                    else HomeScreen(items, vm, padding, true, storageLocations, foodCategories, displayName = displayName, onEdit = { editItem = it }, onScan = { showScanner = true })
                 2 -> RecipesScreen(items, padding, recipeFavorites, vm::toggleRecipeFavorite, vm::addShopping)
                 3 -> StatisticsScreen(items, history, padding)
                 else -> when {
                     showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onMoveToInventory = { pendingShoppingEntry = it }, onBack = { showShopping = false })
                     showReceiptScanner -> ReceiptScannerScreen(onClose = { showReceiptScanner = false }, onConfirm = { receipt -> pendingReceipt = receipt; receiptIndex = 0; showReceiptScanner = false })
                     else -> SettingsScreen(
-                    padding, themeMode, vm::setThemeMode, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, dailySummaryEnabled, vm::setDailySummaryEnabled, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, vm::setReminderEnabled,
+                    padding, themeMode, vm::setThemeMode, displayName, vm::setDisplayName, vm.reminderDays.collectAsState().value, dailySummaryEnabled, vm::setDailySummaryEnabled, storageLocations, vm::addStorageLocation, vm::removeStorageLocation, foodCategories, vm::addFoodCategory, vm::removeFoodCategory, vm::setReminderEnabled,
                     onNotificationSettings = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) },
                     onShopping = { showShopping = true },
                     onScanReceipt = { showReceiptScanner = true },
@@ -340,7 +364,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         LaunchedEffect(productPrefill) { if (productPrefill != null) adding = true }
         if (lookupLoading) AlertDialog(onDismissRequest = { }, title = { Text("Looking up product") }, text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(modifier = Modifier.size(22.dp)); Spacer(Modifier.width(12.dp)); Text("Expiration date will still need to be entered.") } }, confirmButton = {})
         val shoppingCandidate = pendingShoppingEntry
-        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null || shoppingCandidate != null)) FoodEditor(editItem, storageLocations, initialName = shoppingCandidate?.name ?: productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = shoppingCandidate?.category ?: productPrefill?.category ?: "Other", initialQuantity = shoppingCandidate?.quantity?.toDoubleOrNull() ?: 1.0, onDismiss = { adding = false; editItem = null; pendingShoppingEntry = null; vm.clearProductPrefill() }, onSave = { old, draft ->
+        if (onboardingComplete && pendingReceipt == null && (adding || editItem != null || shoppingCandidate != null)) FoodEditor(editItem, storageLocations, foodCategories, initialName = shoppingCandidate?.name ?: productPrefill?.name.orEmpty(), initialBrand = productPrefill?.brand.orEmpty(), initialBarcode = productPrefill?.barcode.orEmpty(), initialCategory = shoppingCandidate?.category ?: productPrefill?.category ?: "Other", initialQuantity = shoppingCandidate?.quantity?.toDoubleOrNull() ?: 1.0, onDismiss = { adding = false; editItem = null; pendingShoppingEntry = null; vm.clearProductPrefill() }, onSave = { old, draft ->
             if (old == null) vm.add(draft) else vm.update(old, draft)
             shoppingCandidate?.let(vm::removeShopping)
             vm.clearProductPrefill()
@@ -351,7 +375,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             adding = false; editItem = null; pendingShoppingEntry = null
         }, onDelete = { editItem?.let(vm::delete); editItem = null; pendingShoppingEntry = null; vm.clearProductPrefill() })
         val receiptCandidate = pendingReceipt?.getOrNull(receiptIndex)
-        if (onboardingComplete && receiptCandidate != null) FoodEditor(null, storageLocations, initialName = receiptCandidate.name, initialQuantity = receiptCandidate.quantity, initialPrice = receiptCandidate.price, onDismiss = { pendingReceipt = null; receiptIndex = 0 }, onSave = { _, draft ->
+        if (onboardingComplete && receiptCandidate != null) FoodEditor(null, storageLocations, foodCategories, initialName = receiptCandidate.name, initialQuantity = receiptCandidate.quantity, initialPrice = receiptCandidate.price, onDismiss = { pendingReceipt = null; receiptIndex = 0 }, onSave = { _, draft ->
             vm.add(draft)
             if (receiptIndex == pendingReceipt.orEmpty().lastIndex && !notificationPromptSeen) {
                 val alreadyAllowed = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -405,10 +429,10 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     }
 }
 
-@Composable private fun HomeScreen(items: List<FoodItem>, vm: ExpiryViewModel, padding: PaddingValues, inventory: Boolean, storageLocations: List<String>, displayName: String, onEdit: (FoodItem) -> Unit, onScan: () -> Unit = {}) {
+@Composable private fun HomeScreen(items: List<FoodItem>, vm: ExpiryViewModel, padding: PaddingValues, inventory: Boolean, storageLocations: List<String>, foodCategories: List<String>, displayName: String, onEdit: (FoodItem) -> Unit, onScan: () -> Unit = {}) {
     val today = LocalDate.now(); var query by remember { mutableStateOf("") }; var filter by remember { mutableStateOf("All") }; var categoryFilter by remember { mutableStateOf("All") }; var status by remember { mutableStateOf("Any status") }; var sort by remember { mutableStateOf("Soonest") }; var gridView by remember { mutableStateOf(false) }
     val soon = items.filter { days(it, today) in 0..7 }; val expired = items.count { days(it, today) < 0 }
-    val categories = items.map { it.category.ifBlank { "Other" } }.distinct().sorted()
+    val categories = (foodCategories + items.map { it.category.ifBlank { "Other" } }).distinct().sorted()
     val visible = items.filter { food -> food.name.contains(query, true) && (filter == "All" || food.location == filter) && (categoryFilter == "All" || food.category == categoryFilter) && when (status) { "Expiring soon" -> days(food, today) in 0..7; "Expired" -> days(food, today) < 0; else -> true } }
         .let { list -> when (sort) {
             "A to Z" -> list.sortedBy { it.name.lowercase() }
@@ -631,10 +655,12 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
     }
 }
 
-@Composable private fun SettingsScreen(padding: PaddingValues, themeMode: String, onThemeMode: (String) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, dailySummaryEnabled: Boolean, onDailySummaryEnabled: (Boolean) -> Unit, storageLocations: List<String>, onAddStorageLocation: (String) -> Unit, onRemoveStorageLocation: (String) -> Unit, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
+@Composable private fun SettingsScreen(padding: PaddingValues, themeMode: String, onThemeMode: (String) -> Unit, displayName: String, onDisplayName: (String) -> Unit, reminderDays: List<Int>, dailySummaryEnabled: Boolean, onDailySummaryEnabled: (Boolean) -> Unit, storageLocations: List<String>, onAddStorageLocation: (String) -> Unit, onRemoveStorageLocation: (String) -> Unit, foodCategories: List<String>, onAddFoodCategory: (String) -> Unit, onRemoveFoodCategory: (String) -> Unit, onReminderEnabled: (Int, Boolean) -> Unit, onNotificationSettings: () -> Unit, onShopping: () -> Unit, onScanReceipt: () -> Unit, onExportJson: () -> Unit, onExportCsv: () -> Unit, onImport: () -> Unit, onClear: () -> Unit) {
     var name by remember(displayName) { mutableStateOf(displayName) }
     var newStorageLocation by remember { mutableStateOf("") }
+    var newCategory by remember { mutableStateOf("") }
     val customStorageLocations = storageLocations.filterNot { location -> defaultStorageLocations.any { it.equals(location, ignoreCase = true) } }
+    val customCategories = foodCategories.filterNot { category -> defaultFoodCategories.any { it.equals(category, ignoreCase = true) } }
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 28.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("MAKE IT YOURS", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp); Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Your name", fontWeight = FontWeight.SemiBold); Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(name, { name = it.take(40) }, modifier = Modifier.weight(1f), placeholder = { Text("What should we call you?") }, singleLine = true); TextButton(onClick = { onDisplayName(name) }) { Text("Save") } } } } }
@@ -648,6 +674,15 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
             }
             if (customStorageLocations.isEmpty()) Text("Fridge, freezer, and pantry are always available.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { customStorageLocations.forEach { location -> AssistChip(onClick = { onRemoveStorageLocation(location) }, label = { Text(location) }, leadingIcon = { Icon(Icons.Rounded.Close, contentDescription = "Remove $location") }) } }
+        } } }
+        item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Food categories", fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(newCategory, { newCategory = it.take(32) }, modifier = Modifier.weight(1f), label = { Text("Add a category") }, singleLine = true)
+                FilledIconButton(onClick = { onAddFoodCategory(newCategory); newCategory = "" }, enabled = newCategory.isNotBlank()) { Icon(Icons.Rounded.Add, "Add category") }
+            }
+            if (customCategories.isEmpty()) Text("Use the built-in food categories or add your own.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            else Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { customCategories.forEach { category -> AssistChip(onClick = { onRemoveFoodCategory(category) }, label = { Text(category) }, leadingIcon = { Icon(Icons.Rounded.Close, contentDescription = "Remove $category") }) } }
         } } }
         item { Text("Expiration reminders", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
         item { Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Daily kitchen summary", fontWeight = FontWeight.SemiBold); Text("Morning alert for expired or soon-to-expire food; needs notification permission", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }; Switch(dailySummaryEnabled, onDailySummaryEnabled) } } }
@@ -705,7 +740,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun FoodEditor(item: FoodItem?, storageLocations: List<String>, initialName: String = "", initialBrand: String = "", initialBarcode: String = "", initialCategory: String = "Other", initialQuantity: Double = 1.0, initialPrice: Double? = null, onDismiss: () -> Unit, onSave: (FoodItem?, FoodDraft) -> Unit, onDelete: () -> Unit) {
+@Composable private fun FoodEditor(item: FoodItem?, storageLocations: List<String>, foodCategories: List<String>, initialName: String = "", initialBrand: String = "", initialBarcode: String = "", initialCategory: String = "Other", initialQuantity: Double = 1.0, initialPrice: Double? = null, onDismiss: () -> Unit, onSave: (FoodItem?, FoodDraft) -> Unit, onDelete: () -> Unit) {
     val editorKey = item?.id?.toString() ?: "$initialBarcode:$initialName"
     var name by remember(editorKey) { mutableStateOf(item?.name ?: initialName) }; var brand by remember(editorKey) { mutableStateOf(item?.brand ?: initialBrand) }; var barcode by remember(editorKey) { mutableStateOf(item?.barcode ?: initialBarcode) }; var category by remember(editorKey) { mutableStateOf(item?.category ?: initialCategory) }; var quantity by remember(editorKey) { mutableStateOf(item?.quantity?.toString() ?: initialQuantity.toString()) }; var unit by remember(editorKey) { mutableStateOf(item?.unit ?: "pcs") }
     var date by remember(editorKey) { mutableStateOf(item?.let { Instant.ofEpochMilli(it.expiresAt).atZone(ZoneId.systemDefault()).toLocalDate() } ?: LocalDate.now().plusDays(7)) }; var dateConfirmed by remember(editorKey) { mutableStateOf(item != null) }; var location by remember(editorKey) { mutableStateOf(item?.location ?: "Fridge") }; var price by remember(editorKey) { mutableStateOf(item?.price?.toString() ?: initialPrice?.toString().orEmpty()) }; var dateOpen by remember(editorKey) { mutableStateOf(false) }
@@ -717,7 +752,7 @@ private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<Strin
             OutlinedTextField(name, { name = it }, label = { Text("Food name") }, singleLine = true)
             OutlinedTextField(brand, { brand = it }, label = { Text("Brand (optional)") }, singleLine = true)
             OutlinedTextField(barcode, { barcode = it.filter { ch -> ch in '0'..'9' }.take(14) }, label = { Text("Barcode") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            Text("Category", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("Fruits", "Vegetables", "Dairy", "Meat", "Fish & seafood", "Bakery", "Beverages", "Frozen food", "Canned food", "Snacks", "Condiments", "Grains & pasta", "Other").forEach { FilterChip(category == it, { category = it }, label = { Text(it) }) } }
+            Text("Category", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { (foodCategories + category).distinct().forEach { FilterChip(category == it, { category = it }, label = { Text(it) }) } }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedTextField(quantity, { quantity = it }, modifier = Modifier.weight(1f), label = { Text("Quantity") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true); OutlinedTextField(unit, { unit = it }, modifier = Modifier.weight(1f), label = { Text("Unit") }, singleLine = true) }
             OptionalDateField("Purchase date", purchasedOn, { purchasedOn = it })
             OptionalDateField("Date opened", openedOn, { openedOn = it })
