@@ -41,6 +41,7 @@ import com.expiryeye.notifications.ExpiryReminderWorker
 import com.expiryeye.notifications.DailyExpiryCheckWorker
 import com.expiryeye.domain.daysUntilExpiry
 import com.expiryeye.domain.defaultReminderOffsets
+import com.expiryeye.domain.consumeQuantity
 import com.expiryeye.domain.ReceiptCandidate
 import com.expiryeye.data.OpenFoodFactsLookup
 import com.expiryeye.data.ProductLookup
@@ -166,7 +167,18 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             ExpiryReminderWorker.schedule(appContext, updated, reminderDays.first())
         }
     }
-    fun consume(item: FoodItem) { viewModelScope.launch { dao.consume(item.id, System.currentTimeMillis()); ExpiryReminderWorker.cancel(appContext, item.id) } }
+    fun consume(item: FoodItem, amount: Double) { viewModelScope.launch {
+        val current = dao.find(item.id) ?: return@launch
+        if (current.consumedAt != null || current.discardedAt != null) return@launch
+        val portion = consumeQuantity(current.quantity, amount) ?: return@launch
+        val now = System.currentTimeMillis()
+        if (portion.itemFinished) {
+            dao.consume(current.id, now)
+            ExpiryReminderWorker.cancel(appContext, current.id)
+        } else {
+            dao.update(current.copy(quantity = portion.remaining, updatedAt = now))
+        }
+    } }
     fun delete(item: FoodItem) { viewModelScope.launch { dao.delete(item); ExpiryReminderWorker.cancel(appContext, item.id) } }
     fun discard(item: FoodItem, reason: String) { viewModelScope.launch { dao.discard(item.id, System.currentTimeMillis(), reason); ExpiryReminderWorker.cancel(appContext, item.id) } }
     fun addShopping(name: String) { viewModelScope.launch { if (name.isNotBlank()) dao.addToShopping(ShoppingEntry(name = name.trim())) } }
@@ -375,7 +387,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Soonest", "A to Z", "Recently added").forEach { FilterChip(sort == it, { sort = it }, label = { Text(it) }) } }
         } }
         item { Row(verticalAlignment = Alignment.CenterVertically) { Text(if (inventory) "All items" else "Use these first", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); if (soon.isNotEmpty() && !inventory) Text("${soon.size} soon", color = Forest, fontWeight = FontWeight.SemiBold) } }
-        if (visible.isEmpty()) item { if (items.isEmpty()) EmptyCard() else Text("No food matches these filters yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) } else this.items(visible, key = { it.id }) { food -> FoodCard(food, today, onConsume = { vm.consume(food) }, onDiscard = { reason -> vm.discard(food, reason) }, onClick = { onEdit(food) }) }
+        if (visible.isEmpty()) item { if (items.isEmpty()) EmptyCard() else Text("No food matches these filters yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp)) } else this.items(visible, key = { it.id }) { food -> FoodCard(food, today, onConsume = { amount -> vm.consume(food, amount) }, onDiscard = { reason -> vm.discard(food, reason) }, onClick = { onEdit(food) }) }
     }
 }
 
@@ -383,14 +395,16 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
 
 @Composable private fun MetricCard(title: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier) { Card(modifier, shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)); Text(value, fontSize = 23.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text(title, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
 
-@Composable private fun FoodCard(item: FoodItem, today: LocalDate, onConsume: () -> Unit, onDiscard: (String) -> Unit, onClick: () -> Unit) {
+@Composable private fun FoodCard(item: FoodItem, today: LocalDate, onConsume: (Double) -> Unit, onDiscard: (String) -> Unit, onClick: () -> Unit) {
     var showDiscardDialog by remember(item.id) { mutableStateOf(false) }
     var discardReason by remember(item.id) { mutableStateOf("Expired") }
+    var showConsumeDialog by remember(item.id) { mutableStateOf(false) }
+    var consumeAmount by remember(item.id, item.quantity) { mutableStateOf(item.quantity.toString()) }
     val left = days(item, today); val statusColor = when { left < 0 -> Color(0xFF9C3D38); left == 0 -> Color(0xFFD85D35); left <= 2 -> Color(0xFFE19531); left <= 7 -> Color(0xFFB68C24); else -> Forest }
     Card(onClick = onClick, shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(54.dp).background(Mint.copy(alpha = .55f), RoundedCornerShape(17.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Eco, null, tint = Forest) }; Spacer(Modifier.width(13.dp))
         Column(Modifier.weight(1f)) { Text(item.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface); Text(listOf(item.brand, item.location, quantityText(item), item.category).filter(String::isNotBlank).joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp); Text(when { left < 0 -> "Expired ${-left}d ago"; left == 0 -> "Expires today"; left == 1 -> "Expires tomorrow"; else -> "$left days left" }, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold); if (item.openedAt != null) Text("Opened ${Instant.ofEpochMilli(item.openedAt).atZone(ZoneId.systemDefault()).toLocalDate().format(DateTimeFormatter.ofPattern("d MMM"))}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
-        IconButton(onClick = onConsume) { Icon(Icons.Rounded.CheckCircle, "Mark consumed", tint = Forest) }
+        IconButton(onClick = { consumeAmount = item.quantity.toString(); showConsumeDialog = true }) { Icon(Icons.Rounded.CheckCircle, "Consume quantity", tint = Forest) }
         IconButton(onClick = { showDiscardDialog = true }) { Icon(Icons.Rounded.Delete, "Mark discarded", tint = MaterialTheme.colorScheme.error) }
     } }
     if (showDiscardDialog) AlertDialog(
@@ -400,6 +414,16 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
         confirmButton = { TextButton(onClick = { showDiscardDialog = false; onDiscard(discardReason) }) { Text("Mark discarded") } },
         dismissButton = { TextButton(onClick = { showDiscardDialog = false }) { Text("Cancel") } }
     )
+    if (showConsumeDialog) {
+        val amount = consumeAmount.toDoubleOrNull()
+        AlertDialog(
+            onDismissRequest = { showConsumeDialog = false },
+            title = { Text("Use ${item.name}") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("${quantityText(item)} available"); OutlinedTextField(consumeAmount, { consumeAmount = it }, label = { Text("Amount used") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true) } },
+            confirmButton = { TextButton(onClick = { amount?.let(onConsume); showConsumeDialog = false }, enabled = amount?.let { it.isFinite() && it > 0 && it <= item.quantity } == true) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { showConsumeDialog = false }) { Text("Cancel") } }
+        )
+    }
 }
 
 @Composable private fun EmptyCard() { Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F2EA))) { Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.Spa, null, tint = Forest, modifier = Modifier.size(36.dp)); Spacer(Modifier.height(10.dp)); Text("Your kitchen is waiting", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Forest); Text("Add your first food item to keep an eye on freshness.", color = Color(0xFF52645A)) } } }

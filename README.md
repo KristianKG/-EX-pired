@@ -9,7 +9,7 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 ## Implemented
 
 - Room persistence for food records and consumed history.
-- Add, edit, delete, consume, search, and filter by storage location. Records include purchase/opened dates and notes; discarding asks for a reason and removes the item from the active inventory.
+- Add, edit, delete, partially or fully consume, search, and filter by storage location. Records include purchase/opened dates and notes; discarding asks for a reason and removes the item from the active inventory.
 - Expiry urgency on the dashboard, including contextual use-soon suggestions.
 - WorkManager reminders at 7, 3, 1, and 0 days before the entered date. Android notification permission is requested after the first item is added; delivery time can vary due to Android background scheduling.
 - Configurable local reminder intervals at 14, 7, 3, 1, and 0 days.
@@ -29,8 +29,8 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 
 ## Still outstanding
 
-The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes partial-quantity consumption and custom storage locations, richer recipe content (images, servings, difficulty), daily summary, waste trends by category and time, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
+The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes custom storage locations, richer recipe content (images, servings, difficulty), daily summary, waste trends by category and time, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
 
 ## Build verification
 
-`gradlew.bat :app:assembleDebug` completed successfully on Windows with JDK 17 and Android SDK 35. `gradlew.bat :app:testDebugUnitTest` passed all 11 unit tests. Instrumented/device tests and a signed release bundle have not been run.
+`gradlew.bat :app:assembleDebug` completed successfully on Windows with JDK 17 and Android SDK 35. `gradlew.bat :app:testDebugUnitTest` passed all 14 unit tests. Instrumented/device tests and a signed release bundle have not been run.
