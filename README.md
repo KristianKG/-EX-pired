@@ -14,15 +14,22 @@ Open this directory in Android Studio with JDK 17 and Android SDK 35, then sync 
 - WorkManager reminders at 7, 3, 1, and 0 days before the entered date. Android notification permission is requested after the first item is added; delivery time can vary due to Android background scheduling.
 - Configurable local reminder intervals at 14, 7, 3, 1, and 0 days.
 - Offline recipe suggestions with ingredient-match counts and missing ingredients.
+- Persistent recipe favorites and filters for meal type, quick meals, vegetarian, high-protein, low-cost, and use-soon recipes. Matching dishes are ranked higher when they use inventory nearing its entered date.
 - Persistent shopping list, including adding missing recipe ingredients.
-- Basic impact statistics derived from tracked and consumed items, estimating value only when prices were entered.
+- Week, month, and year impact summaries, a weekly consumption chart, and estimated value for items marked consumed when a price was entered.
 - Persisted dark theme preference.
 - CSV inventory export and versioned JSON backup/restore, with record validation and explicit replace confirmation.
 - A confirmed clear-data flow and Room migration for the shopping list.
 - Three-screen first-run introduction with skip, explore, and add-first-item paths.
 - CameraX barcode scanning through bundled, on-device ML Kit; online Open Food Facts lookup can prefill product name, brand, and category. Barcode reading itself works offline, and the expiry date always requires user entry.
 - On-device receipt OCR through bundled ML Kit Latin text recognition. Product name, likely price, and simple leading quantity are suggestions only; the user edits/confirms each candidate and enters its expiration date before it is saved. OCR accuracy depends on receipt quality; the bundled recognizer targets Latin script.
+- Original adaptive launcher artwork, Android 12+ splash screen, and monochrome notification icon.
+- Release minification/resource shrinking configuration and explicit Java/Kotlin JVM 17 targets. Device backup is disabled; users can make their own JSON backups.
 
 ## Still outstanding
 
-Bulgarian localization, recipe favorites and dietary filters, extended statistics, broader automated tests, and release artwork/configuration. Expiry date, backup codec, and receipt parser unit tests have been added, but the application has not yet been compiled or tested.
+The screen UI is currently English; only the launcher label has a Bulgarian resource. Other remaining work includes full food lifecycle fields and actions (opened/purchase dates, notes, discard reasons, partial quantities, custom locations), richer recipe content (images, servings, difficulty), daily summary and notification tap routing, discarded-food waste trends, broader database/UI tests, completing repository/Hilt architecture and optional image loading, and final Play Store metadata/signing setup. This app does not claim food is safe based only on appearance or smell, and it never changes entered dates automatically.
+
+## Build verification
+
+`gradlew.bat :app:assembleDebug` completed successfully on Windows with JDK 17 and Android SDK 35. `gradlew.bat :app:testDebugUnitTest` passed all 10 existing unit tests. Instrumented/device tests and a signed release bundle have not been run.

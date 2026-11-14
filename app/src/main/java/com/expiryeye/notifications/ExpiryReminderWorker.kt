@@ -48,7 +48,7 @@ class ExpiryReminderWorker(context: Context, params: WorkerParameters) : Corouti
         val title = if (days == 0) "${item.name} expires today" else "${item.name} is expiring soon"
         val body = when (days) { 0 -> "Check the date and decide whether to use it today."; 1 -> "${item.name} expires tomorrow. Consider using it soon."; else -> "${item.name} expires in $days days. Consider planning to use it." }
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(com.expiryeye.R.drawable.ic_stat_expiry)
             .setContentTitle(title).setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT).setAutoCancel(true).build()
         NotificationManagerCompat.from(applicationContext).notify("expiry-${item.id}-$days", item.id.toInt() + days, notification)

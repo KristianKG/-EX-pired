@@ -76,12 +76,14 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     private val darkKey = booleanPreferencesKey("dark_theme")
     private val notificationPromptKey = booleanPreferencesKey("notification_prompt_seen")
     private val reminderDaysKey = stringSetPreferencesKey("reminder_days")
+    private val recipeFavoritesKey = stringSetPreferencesKey("favorite_recipes")
     private val onboardingKey = booleanPreferencesKey("onboarding_complete")
     private val displayNameKey = stringPreferencesKey("display_name")
     val darkTheme = appContext.settingsStore.data.map { it[darkKey] ?: false }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     val notificationPromptSeen = appContext.settingsStore.data.map { it[notificationPromptKey] ?: false }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
     val onboardingComplete = appContext.settingsStore.data.map { it[onboardingKey] ?: false }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val displayName = appContext.settingsStore.data.map { it[displayNameKey].orEmpty() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+    val recipeFavorites = appContext.settingsStore.data.map { it[recipeFavoritesKey] ?: emptySet() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
     val reminderDays = appContext.settingsStore.data.map { prefs ->
         (prefs[reminderDaysKey]?.mapNotNull(String::toIntOrNull) ?: defaultReminderOffsets).filter { it in listOf(14, 7, 3, 1, 0) }.distinct().sortedDescending()
     }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultReminderOffsets)
@@ -97,6 +99,11 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     fun markNotificationPromptSeen() { viewModelScope.launch { appContext.settingsStore.edit { it[notificationPromptKey] = true } } }
     fun completeOnboarding() { viewModelScope.launch { appContext.settingsStore.edit { it[onboardingKey] = true } } }
     fun setDisplayName(name: String) { viewModelScope.launch { appContext.settingsStore.edit { it[displayNameKey] = name.trim().take(40) } } }
+    fun toggleRecipeFavorite(name: String) { viewModelScope.launch { appContext.settingsStore.edit { prefs ->
+        val favorites = prefs[recipeFavoritesKey]?.toMutableSet() ?: mutableSetOf()
+        if (!favorites.add(name)) favorites.remove(name)
+        prefs[recipeFavoritesKey] = favorites
+    } } }
     fun setReminderEnabled(days: Int, enabled: Boolean) { viewModelScope.launch { appContext.settingsStore.edit { prefs ->
         val current = prefs[reminderDaysKey]?.toMutableSet() ?: defaultReminderOffsets.map(Int::toString).toMutableSet()
         if (enabled) current.add(days.toString()) else current.remove(days.toString())
@@ -177,6 +184,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
     val darkTheme by vm.darkTheme.collectAsState()
     val onboardingComplete by vm.onboardingComplete.collectAsState()
     val displayName by vm.displayName.collectAsState()
+    val recipeFavorites by vm.recipeFavorites.collectAsState()
     val productPrefill by vm.productPrefill.collectAsState()
     val lookupLoading by vm.lookupLoading.collectAsState()
     val notificationPromptSeen by vm.notificationPromptSeen.collectAsState()
@@ -207,7 +215,7 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
                 0 -> HomeScreen(items, vm, padding, false, displayName = displayName, onEdit = { editItem = it })
                 1 -> if (showScanner) BarcodeScannerScreen(onClose = { showScanner = false }, onBarcode = { showScanner = false; vm.lookupBarcode(it) })
                     else HomeScreen(items, vm, padding, true, displayName = displayName, onEdit = { editItem = it }, onScan = { showScanner = true })
-                2 -> RecipesScreen(items, padding, vm::addShopping)
+                2 -> RecipesScreen(items, padding, recipeFavorites, vm::toggleRecipeFavorite, vm::addShopping)
                 3 -> StatisticsScreen(items, history, padding)
                 else -> when {
                     showShopping -> ShoppingScreen(shopping, padding, vm::addShopping, vm::checkShopping, vm::removeShopping, onBack = { showShopping = false })
@@ -335,43 +343,100 @@ class ExpiryViewModel(private val dao: FoodDao, private val appContext: Context)
 
 @Composable private fun EmptyCard() { Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F2EA))) { Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.Spa, null, tint = Forest, modifier = Modifier.size(36.dp)); Spacer(Modifier.height(10.dp)); Text("Your kitchen is waiting", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Forest); Text("Add your first food item to keep an eye on freshness.", color = Color(0xFF52645A)) } } }
 
-private data class Recipe(val name: String, val ingredients: Set<String>, val time: Int, val category: String, val steps: String)
+private data class Recipe(
+    val name: String,
+    val ingredients: Set<String>,
+    val time: Int,
+    val category: String,
+    val steps: String,
+    val vegetarian: Boolean = true,
+    val highProtein: Boolean = false,
+    val lowCost: Boolean = true
+)
 private val recipes = listOf(
-    Recipe("Garden omelette", setOf("egg", "tomato", "spinach", "cheese"), 15, "Breakfast", "Whisk eggs, fold in chopped vegetables and cheese, then cook gently until set."),
+    Recipe("Garden omelette", setOf("egg", "tomato", "spinach", "cheese"), 15, "Breakfast", "Whisk eggs, fold in chopped vegetables and cheese, then cook gently until set.", highProtein = true),
     Recipe("Creamy tomato pasta", setOf("pasta", "tomato", "milk", "cheese", "onion"), 25, "Dinner", "Cook pasta. Simmer tomatoes and onion, stir in milk and cheese, then toss together."),
     Recipe("Apple overnight oats", setOf("oats", "apple", "milk", "yogurt"), 5, "Breakfast", "Mix oats, milk and yogurt. Top with diced apple and chill overnight."),
-    Recipe("Spinach grilled cheese", setOf("bread", "spinach", "cheese", "butter"), 12, "Lunch", "Layer spinach and cheese between bread slices; toast in butter until golden."),
-    Recipe("Quick veggie rice", setOf("rice", "carrot", "peas", "egg", "soy sauce"), 20, "Dinner", "Stir-fry vegetables, add cooked rice, then finish with egg and soy sauce.")
+    Recipe("Spinach grilled cheese", setOf("bread", "spinach", "cheese", "butter"), 12, "Lunch", "Layer spinach and cheese between bread slices; toast in butter until golden.", highProtein = true),
+    Recipe("Quick veggie rice", setOf("rice", "carrot", "peas", "egg", "soy sauce"), 20, "Dinner", "Stir-fry vegetables, add cooked rice, then finish with egg and soy sauce.", highProtein = true),
+    Recipe("Lemon chicken rice", setOf("chicken", "rice", "lemon", "yogurt"), 30, "Dinner", "Cook chicken thoroughly. Serve with warm rice and a lemon-yogurt sauce.", vegetarian = false, highProtein = true, lowCost = false),
+    Recipe("Tuna tomato pasta", setOf("tuna", "pasta", "tomato", "onion"), 18, "Lunch", "Cook pasta. Warm tomato and onion, fold in drained tuna, and toss together.", vegetarian = false, highProtein = true)
 )
 
-@Composable private fun RecipesScreen(items: List<FoodItem>, padding: PaddingValues, onAddShopping: (String) -> Unit) {
-    val ingredients = items.map { it.name.lowercase() }.toSet(); var selected by remember { mutableStateOf<Recipe?>(null) }
+private fun matchedIngredients(recipe: Recipe, items: List<FoodItem>): Set<String> = recipe.ingredients.filter { required ->
+    items.any { food -> food.name.contains(required, ignoreCase = true) || required.contains(food.name, ignoreCase = true) }
+}.toSet()
+
+@Composable private fun RecipesScreen(
+    items: List<FoodItem>, padding: PaddingValues, favorites: Set<String>,
+    onToggleFavorite: (String) -> Unit, onAddShopping: (String) -> Unit
+) {
+    val today = LocalDate.now()
+    var selected by remember { mutableStateOf<Recipe?>(null) }
+    var filter by remember { mutableStateOf("All") }
+    val filters = listOf("All", "Favorites", "Quick", "Breakfast", "Lunch", "Dinner", "Vegetarian", "High protein", "Low cost", "Use soon")
+    val visibleRecipes = recipes.filter { recipe -> when (filter) {
+        "Favorites" -> recipe.name in favorites
+        "Quick" -> recipe.time <= 20
+        "Breakfast", "Lunch", "Dinner" -> recipe.category == filter
+        "Vegetarian" -> recipe.vegetarian
+        "High protein" -> recipe.highProtein
+        "Low cost" -> recipe.lowCost
+        "Use soon" -> items.any { food -> days(food, today) in 0..7 && recipe.ingredients.any { required -> food.name.contains(required, true) || required.contains(food.name, true) } }
+        else -> true
+    } }.sortedWith(
+        compareByDescending<Recipe> { recipe -> items.count { food -> days(food, today) in 0..7 && recipe.ingredients.any { required -> food.name.contains(required, true) || required.contains(food.name, true) } } }
+            .thenByDescending { recipe -> matchedIngredients(recipe, items).size }
+            .thenBy { it.time }
+    )
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { Text("COOK WITH WHAT YOU HAVE", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp); Text("A little inspiration", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground); Text("Local ideas matched to your kitchen.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        if (items.isEmpty()) item { EmptyCard() } else this.items(recipes.sortedByDescending { r -> r.ingredients.count { required -> ingredients.any { it.contains(required, true) || required.contains(it, true) } } }) { recipe ->
-            val matched = recipe.ingredients.filter { req -> ingredients.any { it.contains(req, true) || req.contains(it, true) } }.toSet(); val missing = recipe.ingredients - matched
+        if (items.isEmpty()) item { Text("Add food to your inventory for personalized ingredient matches.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { filters.forEach { option -> FilterChip(selected = filter == option, onClick = { filter = option }, label = { Text(option) }) } } }
+        if (visibleRecipes.isEmpty()) item { Text(if (filter == "Favorites") "Save recipes with the heart button to find them here." else "No recipes match this filter yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 20.dp)) }
+        else this.items(visibleRecipes, key = { it.name }) { recipe ->
+            val matched = matchedIngredients(recipe, items); val missing = recipe.ingredients - matched
             Card(onClick = { selected = recipe }, shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(recipe.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text("${recipe.category} · ${recipe.time} min", color = MaterialTheme.colorScheme.onSurfaceVariant) }; Text("${matched.size}/${recipe.ingredients.size}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold) }
+                Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(recipe.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text("${recipe.category} · ${recipe.time} min", color = MaterialTheme.colorScheme.onSurfaceVariant) }; Text("${matched.size}/${recipe.ingredients.size}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold); IconButton(onClick = { onToggleFavorite(recipe.name) }) { Icon(Icons.Rounded.Favorite, contentDescription = if (recipe.name in favorites) "Remove from favorites" else "Add to favorites", tint = if (recipe.name in favorites) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } }
                 LinearProgressIndicator(progress = { matched.size.toFloat() / recipe.ingredients.size }, modifier = Modifier.fillMaxWidth(), color = Forest, trackColor = Mint)
                 Text(if (missing.isEmpty()) "You have everything" else "Need: ${missing.joinToString()}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
             } }
         }
     }
-    selected?.let { r ->
-        val matched = r.ingredients.filter { required -> ingredients.any { it.contains(required, true) || required.contains(it, true) } }.toSet()
-        val missing = r.ingredients - matched
-        AlertDialog(onDismissRequest = { selected = null }, title = { Text(r.name) }, text = { Text("${r.time} minutes · ${r.ingredients.joinToString()}\n\n${r.steps}") }, confirmButton = { TextButton(onClick = { missing.forEach(onAddShopping); selected = null }) { Text(if (missing.isEmpty()) "Done" else "Add missing to list") } })
+    selected?.let { recipe ->
+        val matched = matchedIngredients(recipe, items)
+        val missing = recipe.ingredients - matched
+        AlertDialog(
+            onDismissRequest = { selected = null },
+            title = { Row(verticalAlignment = Alignment.CenterVertically) { Text(recipe.name, modifier = Modifier.weight(1f)); IconButton(onClick = { onToggleFavorite(recipe.name) }) { Icon(Icons.Rounded.Favorite, contentDescription = if (recipe.name in favorites) "Remove from favorites" else "Add to favorites", tint = if (recipe.name in favorites) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) } } },
+            text = { Text("${matched.size} of ${recipe.ingredients.size} ingredients available · ${recipe.time} minutes\n${recipe.ingredients.joinToString()}\n\n${recipe.steps}") },
+            confirmButton = { TextButton(onClick = { missing.forEach(onAddShopping); selected = null }) { Text(if (missing.isEmpty()) "Done" else "Add missing to list") } }
+        )
     }
 }
 
 @Composable private fun StatisticsScreen(active: List<FoodItem>, history: List<FoodItem>, padding: PaddingValues) {
-    val consumed = history.filter { it.consumedAt != null }; val saved = consumed.mapNotNull { it.price }.sum(); val total = active.size + consumed.size
+    val today = LocalDate.now()
+    val consumed = history.filter { it.consumedAt != null }
+    var period by remember { mutableStateOf("Week") }
+    val periodStart = when (period) { "Month" -> today.minusMonths(1).plusDays(1); "Year" -> today.minusYears(1).plusDays(1); else -> today.minusDays(6) }
+    val periodStartMillis = periodStart.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    val addedInPeriod = history.count { it.createdAt >= periodStartMillis }
+    val consumedInPeriod = history.filter { (it.consumedAt ?: Long.MIN_VALUE) >= periodStartMillis }.sortedByDescending { it.consumedAt }
+    val estimatedValue = consumedInPeriod.mapNotNull { it.price }.sum()
+    val week = (6 downTo 0).map { today.minusDays(it.toLong()) }
+    val weeklyConsumed = week.map { day -> consumed.count { item -> Instant.ofEpochMilli(item.consumedAt!!).atZone(ZoneId.systemDefault()).toLocalDate() == day } }
+    val maxDaily = weeklyConsumed.maxOrNull()?.coerceAtLeast(1) ?: 1
+    val expiredNow = active.count { days(it, today) < 0 }
     LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentPadding = PaddingValues(top = 28.dp, bottom = 30.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("YOUR IMPACT", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp); Text("Small wins add up.", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground); Text("Based on the items you track on this device.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { MetricCard("Tracked", total.toString(), Icons.Rounded.Inventory2, Modifier.weight(1f)); MetricCard("Enjoyed", consumed.size.toString(), Icons.Rounded.Favorite, Modifier.weight(1f)) } }
-        item { Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text("Estimated value enjoyed", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text(if (consumed.any { it.price != null }) "${"%.2f".format(saved)} in tracked items" else "Add prices to items to estimate value here.", color = MaterialTheme.colorScheme.primary, fontSize = 21.sp, fontWeight = FontWeight.Bold); Text("Estimate from prices you entered for items marked consumed. This is not a measure of exact savings.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) } } }
-        item { Text("Recently enjoyed", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
-        if (consumed.isEmpty()) item { Text("Mark food as consumed and your progress will show here.", color = MaterialTheme.colorScheme.onSurfaceVariant) } else this.items(consumed.take(10)) { Text("✓  ${it.name}", color = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(14.dp)).padding(15.dp)) }
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Week", "Month", "Year").forEach { option -> FilterChip(selected = period == option, onClick = { period = option }, label = { Text(option) }) } } }
+        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { MetricCard("Added", addedInPeriod.toString(), Icons.Rounded.Add, Modifier.weight(1f)); MetricCard("Consumed", consumedInPeriod.size.toString(), Icons.Rounded.Favorite, Modifier.weight(1f)); MetricCard("Expired now", expiredNow.toString(), Icons.Rounded.WarningAmber, Modifier.weight(1f)) } }
+        item { Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { Text("Estimated value enjoyed", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface); Text(if (consumedInPeriod.any { it.price != null }) "${"%.2f".format(estimatedValue)} in tracked items" else "Add prices to items to estimate value here.", color = MaterialTheme.colorScheme.primary, fontSize = 21.sp, fontWeight = FontWeight.Bold); Text("Estimate from prices you entered for items marked consumed during this period. It is not exact savings.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) } } }
+        item { Text("Weekly consumption", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
+        item { Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) { Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { week.forEachIndexed { index, day -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { Text(day.format(DateTimeFormatter.ofPattern("EEE")), modifier = Modifier.width(40.dp), color = MaterialTheme.colorScheme.onSurfaceVariant); LinearProgressIndicator(progress = { weeklyConsumed[index].toFloat() / maxDaily }, modifier = Modifier.weight(1f), color = Forest, trackColor = Mint); Text(weeklyConsumed[index].toString(), modifier = Modifier.width(20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } }
+        item { Text("Recently consumed · $period", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
+        if (consumedInPeriod.isEmpty()) item { Text("Mark food as consumed and your progress will show here.", color = MaterialTheme.colorScheme.onSurfaceVariant) } else this.items(consumedInPeriod.take(10)) { Text("✓  ${it.name}", color = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, RoundedCornerShape(14.dp)).padding(15.dp)) }
     }
 }
 
